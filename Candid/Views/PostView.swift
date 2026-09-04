@@ -11,8 +11,9 @@ struct PostView: View {
     @State private var message: FormMessage?
     @State private var isShowingCamera = false
 
-    /// The in-flight load for the current `pickerItem`, so picking again
-    /// cancels it rather than racing it — see `loadSelectedImage`.
+    /// The in-flight load — a library pick being decoded or a camera capture
+    /// being downscaled — so a newer one cancels it rather than racing it. See
+    /// `loadSelectedImage`.
     @State private var imageLoadTask: Task<Void, Never>?
 
     var body: some View {
@@ -82,38 +83,39 @@ struct PostView: View {
         }
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { captured in
-                selectedImage = captured
-                message = nil
+                imageLoadTask?.cancel()
+                imageLoadTask = Task { await useCapturedImage(captured) }
             }
             .ignoresSafeArea()
         }
     }
 
     /// Loads the picked photo. Picking again while a load is in flight cancels
-    /// the earlier task, and both paths below re-check that `item` is still
-    /// the selection before touching any state. Without that, two loads raced:
-    /// whichever finished last set the preview — sometimes the *older* photo —
-    /// and the first to finish took the spinner down while the other was still
-    /// running.
+    /// the earlier task, and both paths below re-check that this load is still
+    /// the current one before touching any state. Without that, two loads
+    /// raced: whichever finished last set the preview — sometimes the *older*
+    /// photo — and the first to finish took the spinner down while the other
+    /// was still running.
     private func loadSelectedImage(_ item: PhotosPickerItem) async {
         isLoadingImage = true
         message = nil
 
-        let data: Data?
+        let image: UIImage?
         do {
-            data = try await item.loadTransferable(type: Data.self)
+            let data = try await item.loadTransferable(type: Data.self)
+            image = await Self.downsampled(data)
         } catch {
-            // Superseded by a newer pick, which now owns the spinner and the
-            // message; a cancelled load lands here too.
-            guard pickerItem == item else { return }
+            // Superseded by a newer pick or a camera capture, which now owns
+            // the spinner and the message; a cancelled load lands here too.
+            guard isCurrentLoad(for: item) else { return }
             message = .failure(error.localizedDescription)
             isLoadingImage = false
             return
         }
 
-        guard pickerItem == item else { return }
+        guard isCurrentLoad(for: item) else { return }
 
-        if let data, let image = UIImage(data: data) {
+        if let image {
             selectedImage = image
         } else {
             // Keep whatever was already chosen rather than blanking the
@@ -121,6 +123,42 @@ struct PostView: View {
             message = .failure("That photo couldn't be loaded. Try another one.")
         }
         isLoadingImage = false
+    }
+
+    /// A camera capture arrives as a full-resolution `UIImage` — decoded, it
+    /// is tens of megabytes. Bring it down to the upload size before it is
+    /// held in state or drawn, off the main actor so dismissing the camera
+    /// does not hitch.
+    private func useCapturedImage(_ captured: UIImage) async {
+        isLoadingImage = true
+        message = nil
+
+        let image = await Task.detached(priority: .userInitiated) {
+            StorageService.downscaled(captured)
+        }.value
+
+        guard !Task.isCancelled else { return }
+        selectedImage = image
+        isLoadingImage = false
+    }
+
+    /// Whether the load for `item` is still the one that should update the
+    /// screen. Every superseding action — a new pick, a capture, clearing the
+    /// picker after a post — cancels the previous task first, so cancellation
+    /// alone would do; the selection check is insurance against a
+    /// `loadTransferable` that ignores cancellation and finishes anyway.
+    private func isCurrentLoad(for item: PhotosPickerItem) -> Bool {
+        !Task.isCancelled && pickerItem == item
+    }
+
+    /// Decodes straight to the upload size, off the main actor: decoding is
+    /// the expensive part of picking a photo, and this way the full-size
+    /// bitmap is never built — see `ImageDownsampler`.
+    private static func downsampled(_ data: Data?) async -> UIImage? {
+        guard let data else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            ImageDownsampler.image(from: data, maxPixelSize: StorageService.maxDimension)
+        }.value
     }
 
     private func post() async {
