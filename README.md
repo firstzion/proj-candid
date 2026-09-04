@@ -112,6 +112,20 @@ so deletes are denied outright. **These read policies are dev-only** — Candid 
 meant to show you your friends' posts, so reads will need to narrow to a friend
 graph once one exists. The migration says so at the top.
 
+### Auth configuration
+
+Hosted auth settings live in `supabase/config.toml` under `[auth]` and are applied
+with `supabase config push`. Email confirmation is disabled
+(`[auth.email] enable_confirmations = false`) so accounts are usable immediately;
+email confirmation is out of scope for the MVP.
+
+> **`supabase config push` pushes the whole `[auth]` block, not just what you
+> edited, and it applies immediately with no confirmation prompt.** Anything in
+> `config.toml` that differs from the hosted project gets overwritten, including
+> `init` defaults you never touched. Diff before pushing, and keep this file
+> matching the hosted project's intended state rather than the local-stack
+> defaults.
+
 ### CLI setup
 
 The CLI is installed globally via npm (there is no Homebrew on this machine):

@@ -1,15 +1,33 @@
 import SwiftUI
 
 struct ProfileView: View {
+    @State private var isShowingSignUp = false
+
     var body: some View {
         VStack(spacing: 24) {
             Text("Profile")
+
+            // Temporary entry point so sign-up is reachable before the
+            // auth-gated app root lands in SOL-8.
+            Button("Sign Up") {
+                isShowingSignUp = true
+            }
 
             #if DEBUG
             BackendConnectionCheck()
             #endif
         }
         .padding()
+        .sheet(isPresented: $isShowingSignUp) {
+            NavigationStack {
+                SignUpView()
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { isShowingSignUp = false }
+                        }
+                    }
+            }
+        }
     }
 }
 
