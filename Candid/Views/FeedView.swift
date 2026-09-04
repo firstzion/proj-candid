@@ -54,7 +54,7 @@ struct FeedView: View {
                 case .loaded:
                     List {
                         ForEach(posts) { post in
-                            PostRow(post: post)
+                            FeedPostRow(post: post)
                                 .onAppear {
                                     if post.id == posts.last?.id {
                                         Task { await loadMore() }
@@ -183,7 +183,9 @@ struct FeedView: View {
     }
 }
 
-private struct PostRow: View {
+/// One post in the list. Not to be confused with `FeedService`'s row decoder,
+/// which is also a "post row" — this one is the view.
+private struct FeedPostRow: View {
     let post: FeedPost
 
     var body: some View {

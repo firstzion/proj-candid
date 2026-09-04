@@ -8,17 +8,12 @@ struct PostView: View {
     @State private var caption = ""
     @State private var isLoadingImage = false
     @State private var isPosting = false
-    @State private var message: Message?
+    @State private var message: FormMessage?
     @State private var isShowingCamera = false
 
     /// The in-flight load for the current `pickerItem`, so picking again
     /// cancels it rather than racing it — see `loadSelectedImage`.
     @State private var imageLoadTask: Task<Void, Never>?
-
-    private enum Message {
-        case posted
-        case failed(String)
-    }
 
     var body: some View {
         NavigationStack {
@@ -69,16 +64,7 @@ struct PostView: View {
                     }
                 }
 
-                switch message {
-                case .posted:
-                    Section {
-                        Text("Posted.").foregroundStyle(.green)
-                    }
-                case .failed(let text):
-                    FormMessageSection(message: text)
-                case nil:
-                    EmptyView()
-                }
+                FormMessageSection(message: message)
             }
             .navigationTitle("New Post")
         }
@@ -120,7 +106,7 @@ struct PostView: View {
             // Superseded by a newer pick, which now owns the spinner and the
             // message; a cancelled load lands here too.
             guard pickerItem == item else { return }
-            message = .failed(error.localizedDescription)
+            message = .failure(error.localizedDescription)
             isLoadingImage = false
             return
         }
@@ -132,14 +118,14 @@ struct PostView: View {
         } else {
             // Keep whatever was already chosen rather than blanking the
             // preview because one load failed.
-            message = .failed("That photo couldn't be loaded. Try another one.")
+            message = .failure("That photo couldn't be loaded. Try another one.")
         }
         isLoadingImage = false
     }
 
     private func post() async {
         guard let image = selectedImage else {
-            message = .failed(PostError.noImageSelected.localizedDescription)
+            message = .failure(PostError.noImageSelected.localizedDescription)
             return
         }
 
@@ -154,9 +140,9 @@ struct PostView: View {
             selectedImage = nil
             pickerItem = nil
             caption = ""
-            message = .posted
+            message = .success("Posted.")
         } catch {
-            message = .failed(error.localizedDescription)
+            message = .failure(error.localizedDescription)
         }
 
         isPosting = false

@@ -8,7 +8,7 @@ struct LogInView: View {
     /// Only failures are shown. A successful log in emits on the SDK's
     /// auth-state stream, `RootView` swaps to the main tabs, and this view is
     /// torn down — so a success message here would never be read.
-    @State private var errorMessage: String?
+    @State private var message: FormMessage?
 
     var body: some View {
         Form {
@@ -29,7 +29,7 @@ struct LogInView: View {
                 }
             }
 
-            FormMessageSection(message: errorMessage)
+            FormMessageSection(message: message)
 
             Section {
                 NavigationLink("Don't have an account? Sign Up") {
@@ -48,12 +48,12 @@ struct LogInView: View {
 
     private func submit() async {
         isSubmitting = true
-        errorMessage = nil
+        message = nil
 
         do {
             try await AuthService().signIn(email: email, password: password)
         } catch {
-            errorMessage = error.localizedDescription
+            message = .failure(error.localizedDescription)
         }
 
         isSubmitting = false

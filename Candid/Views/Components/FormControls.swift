@@ -46,16 +46,44 @@ struct AsyncSubmitButton: View {
     }
 }
 
+/// The outcome of a form's last submit, shown under its controls. One type for
+/// every form: the log-in, sign-up and compose screens had each grown their
+/// own enum for the same idea.
+struct FormMessage: Equatable {
+    enum Kind: Equatable {
+        case success
+        case notice
+        case failure
+    }
+
+    let text: String
+    let kind: Kind
+
+    static func success(_ text: String) -> FormMessage { FormMessage(text: text, kind: .success) }
+    static func notice(_ text: String) -> FormMessage { FormMessage(text: text, kind: .notice) }
+    static func failure(_ text: String) -> FormMessage { FormMessage(text: text, kind: .failure) }
+}
+
 /// A form section carrying a single message, shown only when there is one.
 struct FormMessageSection: View {
-    let message: String?
-    var tint: Color = .red
+    let message: FormMessage?
 
     var body: some View {
         if let message {
             Section {
-                Text(message).foregroundStyle(tint)
+                Text(message.text).foregroundStyle(tint(for: message.kind))
             }
+        }
+    }
+
+    private func tint(for kind: FormMessage.Kind) -> Color {
+        switch kind {
+        case .success:
+            return .green
+        case .notice:
+            return .orange
+        case .failure:
+            return .red
         }
     }
 }
