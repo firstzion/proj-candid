@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific state
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode — build products
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# CocoaPods / Carthage (not used today, ignored pre-emptively)
+Pods/
+Carthage/Build/
+
+# Local configuration holding backend credentials (see SOL-4)
+Config/Secrets.xcconfig
+*.local.xcconfig
