@@ -1,0 +1,117 @@
+import Foundation
+import Supabase
+
+enum FeedServiceError: LocalizedError {
+    case other(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .other(let message):
+            return message
+        }
+    }
+}
+
+struct FeedService {
+    static let defaultLimit = 20
+
+    /// Fetches one page of posts, newest first, each carrying its author's
+    /// username and a ready-to-display signed image URL.
+    ///
+    /// Pass the previous page's last post's `cursor` as `before` to fetch the
+    /// next page; omit it for the first page. An empty `posts` table (or an
+    /// exhausted cursor) returns `[]` rather than throwing.
+    func fetchPosts(before cursor: FeedCursor? = nil, limit: Int = FeedService.defaultLimit) async throws -> [FeedPost] {
+        let client = try SupabaseService.shared.client()
+
+        do {
+            var query = client
+                .from("posts")
+                .select("id, image_path, caption, created_at, profiles(username)")
+
+            if let cursor {
+                // Keyset pagination on (created_at, id) rather than
+                // created_at alone: two posts can share a timestamp, and a
+                // plain `created_at < cursor` would silently drop or repeat
+                // whichever of them didn't make the previous page.
+                let cursorFilter = "created_at.lt.\(cursor.createdAt),and(created_at.eq.\(cursor.createdAt),id.lt.\(cursor.id.uuidString))"
+                query = query.or(cursorFilter)
+            }
+
+            let rows: [PostRow] = try await query
+                .order("created_at", ascending: false)
+                .order("id", ascending: false)
+                .limit(limit)
+                .execute()
+                .value
+
+            guard !rows.isEmpty else { return [] }
+
+            let signedURLs = try await StorageService().signedURLs(for: rows.map(\.imagePath))
+
+            // A row whose image didn't come back (e.g. the object went
+            // missing) is dropped rather than failing the whole page.
+            return rows.compactMap { row in
+                guard let imageURL = signedURLs[row.imagePath] else { return nil }
+                return FeedPost(
+                    id: row.id,
+                    imageURL: imageURL,
+                    caption: row.caption,
+                    createdAt: row.createdAt,
+                    username: row.profiles.username,
+                    cursor: FeedCursor(createdAt: row.createdAtRaw, id: row.id)
+                )
+            }
+        } catch {
+            throw Self.mapFeedError(error)
+        }
+    }
+
+    static func mapFeedError(_ error: Error) -> FeedServiceError {
+        guard let postgrestError = error as? PostgrestError else {
+            return .other(error.localizedDescription)
+        }
+        // PostgrestError does not conform to LocalizedError, so its
+        // localizedDescription is generic Foundation boilerplate. Use the
+        // server's own message.
+        return .other(postgrestError.message)
+    }
+}
+
+/// Decodes one row of `posts` joined with its author's username. `profiles`
+/// comes back as a single embedded object rather than an array, because
+/// `posts.user_id` is a many-to-one foreign key to `profiles.id`.
+///
+/// `created_at` is decoded twice — once as `Date` for display, once as the
+/// raw `String` for `FeedCursor` — because only the untouched original text
+/// round-trips exactly into the next page's filter. See `FeedCursor`.
+private struct PostRow: Decodable {
+    let id: UUID
+    let imagePath: String
+    let caption: String?
+    let createdAt: Date
+    let createdAtRaw: String
+    let profiles: ProfileUsername
+
+    struct ProfileUsername: Decodable {
+        let username: String
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case imagePath = "image_path"
+        case caption
+        case createdAt = "created_at"
+        case profiles
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        imagePath = try container.decode(String.self, forKey: .imagePath)
+        caption = try container.decodeIfPresent(String.self, forKey: .caption)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        createdAtRaw = try container.decode(String.self, forKey: .createdAt)
+        profiles = try container.decode(ProfileUsername.self, forKey: .profiles)
+    }
+}

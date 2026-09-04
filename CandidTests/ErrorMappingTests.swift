@@ -268,3 +268,28 @@ struct PostServiceTests {
         #expect(message.contains("foreign key constraint"))
     }
 }
+
+@Suite("Feed error mapping")
+struct FeedErrorMappingTests {
+    /// Same boilerplate trap as the other PostgrestError mappers.
+    @Test("PostgREST errors surface the server's message, not boilerplate")
+    func serverMessageSurvives() {
+        let mapped = FeedService.mapFeedError(
+            PostgrestError(code: "42501", message: "permission denied for table posts")
+        )
+        guard case .other(let message) = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+        #expect(message == "permission denied for table posts")
+    }
+
+    @Test("a non-PostgREST error falls through")
+    func nonPostgrestError() {
+        let mapped = FeedService.mapFeedError(URLError(.notConnectedToInternet))
+        guard case .other = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+    }
+}

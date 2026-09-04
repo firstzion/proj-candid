@@ -89,6 +89,36 @@ struct StorageService {
         }
     }
 
+    /// Mints signed URLs for several objects in one request — what the feed
+    /// (SOL-13) uses instead of one round trip per post.
+    ///
+    /// A path that fails to sign (e.g. the object went missing) is simply
+    /// absent from the result rather than failing the whole batch; the caller
+    /// decides how to handle a post whose image didn't come back.
+    func signedURLs(
+        for paths: [String],
+        expiresIn: Int = StorageService.signedURLLifetime
+    ) async throws -> [String: URL] {
+        guard !paths.isEmpty else { return [:] }
+
+        let client = try SupabaseService.shared.client()
+        do {
+            let results = try await client.storage
+                .from(Self.bucket)
+                .createSignedURLs(paths: paths, expiresIn: expiresIn)
+
+            var urls: [String: URL] = [:]
+            for result in results {
+                if case .success(let path, let signedURL) = result {
+                    urls[path] = signedURL
+                }
+            }
+            return urls
+        } catch {
+            throw Self.mapStorageError(error)
+        }
+    }
+
     static func mapStorageError(_ error: Error) -> StorageServiceError {
         // StorageError, like PostgrestError, is a plain Error rather than a
         // LocalizedError, so its localizedDescription is generic Foundation
