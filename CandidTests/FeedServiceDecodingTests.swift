@@ -75,7 +75,7 @@ struct FeedServiceDecodingTests {
             return .init(statusCode: 200, body: Self.rowsJSON(isPage2 ? page2Rows : page1Rows))
         }
 
-        let feedService = FeedService(client: Self.makeTestClient())
+        let feedService = FeedService(client: TestSupabaseClient.make())
 
         let page1 = try await feedService.fetchPosts()
         #expect(page1.posts.count == 20)
@@ -118,7 +118,7 @@ struct FeedServiceDecodingTests {
         )
         StubURLProtocol.setHandler { _ in .init(statusCode: 400, body: errorBody) }
 
-        let feedService = FeedService(client: Self.makeTestClient())
+        let feedService = FeedService(client: TestSupabaseClient.make())
 
         do {
             _ = try await feedService.fetchPosts()
@@ -133,17 +133,6 @@ struct FeedServiceDecodingTests {
     }
 
     // MARK: - Fixtures
-
-    private static func makeTestClient() -> SupabaseClient {
-        SupabaseClient(
-            supabaseURL: URL(string: "https://example.supabase.co")!,
-            supabaseKey: "test-key",
-            options: SupabaseClientOptions(
-                auth: .init(storage: InMemoryAuthLocalStorage()),
-                global: .init(session: StubURLProtocol.session)
-            )
-        )
-    }
 
     /// A distinct, valid `timestamptz` string `index` seconds before a fixed
     /// base — real six-fractional-digit PostgREST formatting, just with
@@ -176,35 +165,13 @@ struct FeedServiceDecodingTests {
         return Data("[\(body)]".utf8)
     }
 
-    /// `URLSession` converts a request's `httpBody` into `httpBodyStream`
-    /// before handing it to a `URLProtocol`, so `request.httpBody` alone is
-    /// nil by the time `startLoading()` sees a POST — the body has to be
-    /// drained from the stream instead.
-    private static func bodyData(for request: URLRequest) -> Data? {
-        if let body = request.httpBody { return body }
-        guard let stream = request.httpBodyStream else { return nil }
-
-        stream.open()
-        defer { stream.close() }
-
-        var data = Data()
-        let bufferSize = 4096
-        var buffer = [UInt8](repeating: 0, count: bufferSize)
-        while stream.hasBytesAvailable {
-            let read = stream.read(&buffer, maxLength: bufferSize)
-            guard read > 0 else { break }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-
     /// Mirrors `object/sign/<bucket>`'s real response shape: one entry per
     /// requested path, `unsignedPath` reported as a failure like a missing
     /// object would be, everything else a usable (if fake) signed URL.
     private static func signResponse(for request: URLRequest, unsignedPath: String) -> StubURLProtocol.Response {
         struct SignParams: Decodable { let paths: [String] }
         guard
-            let body = Self.bodyData(for: request),
+            let body = request.drainedBody,
             let params = try? JSONDecoder().decode(SignParams.self, from: body)
         else {
             return .init(statusCode: 400, body: Data())
