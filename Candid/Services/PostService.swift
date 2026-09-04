@@ -44,7 +44,7 @@ struct PostService {
             throw Self.mapSessionError(error)
         }
 
-        let uploaded = try await StorageService().uploadPostImage(image, userId: userId)
+        let imagePath = try await StorageService().uploadPostImage(image, userId: userId)
 
         do {
             try await client
@@ -52,7 +52,7 @@ struct PostService {
                 .insert(
                     NewPost(
                         userId: userId,
-                        imagePath: uploaded.path,
+                        imagePath: imagePath,
                         caption: Self.normalizedCaption(caption)
                     )
                 )

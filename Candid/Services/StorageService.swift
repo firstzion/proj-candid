@@ -19,23 +19,12 @@ enum StorageServiceError: LocalizedError {
     }
 }
 
-/// The result of uploading a post image.
-struct UploadedImage: Equatable {
-    /// Stable object path inside the bucket, e.g. `{user_id}/{uuid}.jpg`.
-    /// This is the value to persist in `posts.image_url` (SOL-11).
-    let path: String
-
-    /// Short-lived URL for displaying the image straight after upload.
-    /// Deliberately *not* for persisting — it expires.
-    let signedURL: URL
-}
-
 /// Uploads post images to the private `post-images` bucket.
 ///
 /// The bucket is private, so reads go through time-limited signed URLs rather
 /// than permanent public ones. That means the durable identifier for an image
-/// is its object *path*, and a URL is minted on demand — see `signedURL(for:)`,
-/// which the feed will use in SOL-13/SOL-14.
+/// is its object *path*, and a URL is minted on demand at read time — see
+/// `signedURLs(for:)`, which the feed uses.
 struct StorageService {
     static let bucket = "post-images"
 
@@ -47,7 +36,12 @@ struct StorageService {
     /// feed session while still expiring if one leaks.
     static let signedURLLifetime = 60 * 60
 
-    func uploadPostImage(_ image: UIImage, userId: UUID) async throws -> UploadedImage {
+    /// Uploads the image and returns its object path, `{user_id}/{uuid}.jpg` —
+    /// the value `posts.image_path` stores. Nothing needs a URL at upload time:
+    /// the feed mints them when it reads. This used to mint one anyway, which
+    /// was a wasted round trip with its own way to fail *after* the object was
+    /// already up — and a retry then uploaded a second, orphaned copy.
+    func uploadPostImage(_ image: UIImage, userId: UUID) async throws -> String {
         let client = try SupabaseService.shared.client()
 
         guard let data = Self.jpegData(for: image) else {
@@ -63,15 +57,11 @@ struct StorageService {
             try await client.storage
                 .from(Self.bucket)
                 .upload(path, data: data, options: FileOptions(contentType: "image/jpeg"))
-
-            let signedURL = try await client.storage
-                .from(Self.bucket)
-                .createSignedURL(path: path, expiresIn: Self.signedURLLifetime)
-
-            return UploadedImage(path: path, signedURL: signedURL)
         } catch {
             throw Self.mapStorageError(error)
         }
+
+        return path
     }
 
     /// Mints a time-limited URL for reading an object at `path`.
