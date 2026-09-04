@@ -62,7 +62,6 @@ enum SignInError: LocalizedError {
 }
 
 struct SignUpResult {
-    let userID: UUID
     /// False when the project still requires email confirmation, in which case
     /// the account exists but is not usable until the link is clicked.
     let hasActiveSession: Bool
@@ -94,10 +93,7 @@ struct AuthService {
                 password: password,
                 data: ["username": .string(username)]
             )
-            return SignUpResult(
-                userID: response.user.id,
-                hasActiveSession: response.session != nil
-            )
+            return SignUpResult(hasActiveSession: response.session != nil)
         } catch {
             throw Self.mapSignUpError(error)
         }

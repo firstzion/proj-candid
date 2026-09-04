@@ -64,21 +64,6 @@ struct StorageService {
         return path
     }
 
-    /// Mints a time-limited URL for reading an object at `path`.
-    func signedURL(
-        for path: String,
-        expiresIn: Int = StorageService.signedURLLifetime
-    ) async throws -> URL {
-        let client = try SupabaseService.shared.client()
-        do {
-            return try await client.storage
-                .from(Self.bucket)
-                .createSignedURL(path: path, expiresIn: expiresIn)
-        } catch {
-            throw Self.mapStorageError(error)
-        }
-    }
-
     /// Mints signed URLs for several objects in one request — what the feed
     /// (SOL-13) uses instead of one round trip per post.
     ///

@@ -185,8 +185,8 @@ write into another user's folder.
 
 Because the bucket is private, reads go through short-lived signed URLs rather
 than permanent public ones. The durable identifier for an image is therefore its
-object **path**, which is what `posts.image_path` stores; `StorageService.signedURL(for:)`
-mints a URL on demand. Public buckets were the simpler option, but a public bucket
+object **path**, which is what `posts.image_path` stores; `StorageService.signedURLs(for:)`
+mints URLs on demand, a page at a time. Public buckets were the simpler option, but a public bucket
 makes every uploaded photo fetchable forever by anyone with the URL, which is hard
 to reconcile with an app built around sharing to friends — and it is a one-way
 door, since anything already exposed stays exposed.
