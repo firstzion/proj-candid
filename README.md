@@ -322,6 +322,38 @@ supabase link --project-ref ztdggewgqaoaixjhttct
 `link` asks for the database password set when the project was created. Once linked,
 `supabase db push` applies any new migrations to the hosted database.
 
+### Seed data
+
+`supabase/seed.sql` creates ten test accounts (`alice` through `judy`, all
+`{username}@seed.candid.test`, password `CandidSeed123!`) and 30 posts spread
+across them and over the last two weeks — enough to page through and to
+eyeball relative timestamps, unlike the couple of posts real manual testing
+produces. `.test` is reserved by RFC 2606 and never resolves, so these
+addresses need no confirmation email and could not sign up through the app's
+own UI anyway (GoTrue's sign-up validates deliverability); the script writes
+directly into `auth.users`/`auth.identities` instead, the same rows a real
+sign-up produces.
+
+Run it with database-owner privileges — the publishable key the app uses
+cannot do this, by design:
+
+```bash
+supabase db execute --linked -f supabase/seed.sql
+```
+
+or paste the file into the Dashboard's SQL Editor. It's idempotent: every run
+deletes and recreates everything scoped to the `@seed.candid.test` suffix
+first, so re-running never accumulates duplicates.
+
+The follow graph, blocking, and a mix of visibility tiers belong in this
+script too, but none of the three exist yet — `follows` and `blocks` are
+Milestone 7 ([SOL-27](https://linear.app/cspurlock/issue/SOL-27/follows-table-and-migration),
+[SOL-31](https://linear.app/cspurlock/issue/SOL-31/blocking)), and so is
+`posts.visibility` ([SOL-29](https://linear.app/cspurlock/issue/SOL-29/post-visibility-column-followers-mutuals)).
+The script has the intended shapes (a mutual pair, a one-way follow, an
+unconnected account) written out and commented, ready to uncomment once those
+tables land rather than designed from scratch then.
+
 ## Conventions
 
 - Bundle identifier: `com.firstzion.candid`

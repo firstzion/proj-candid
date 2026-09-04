@@ -64,9 +64,10 @@ schema_paths = []
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
-# Disabled: no seed.sql exists yet. SOL-26 (seed script for multi-account test
-# data, Milestone 6) will add one — re-enable and point sql_paths at it then.
-enabled = false
+# There is no local stack for that to apply to (see Backend in the README) —
+# this only matters if one is ever started with `supabase start`. Against
+# the hosted project, seed.sql is run manually; see README's Seed data.
+enabled = true
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
 sql_paths = ["./seed.sql"]
