@@ -238,6 +238,13 @@ makes every uploaded photo fetchable forever by anyone with the URL, which is ha
 to reconcile with an app built around sharing to friends — and it is a one-way
 door, since anything already exposed stays exposed.
 
+Minted URLs are valid for one hour (`StorageService.signedURLLifetime`) — comfortably
+longer than a feed session, while still expiring if one leaks out (a screenshot of a
+page, a copied link). An expired URL fails to load like any broken image rather than
+crashing; the feed's own staleness refresh (a post older than half the signed-URL
+lifetime re-triggers a fetch, which re-signs) is what actually recovers it, rather
+than any retry logic in the image view itself.
+
 Uploads are downscaled to a 1600px longest edge and encoded as JPEG at 80%.
 Photos are decoded straight to that size when picked (`ImageDownsampler`, via
 ImageIO's thumbnailing), so the full-size bitmap — around 200 MB for a
