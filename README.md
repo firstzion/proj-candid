@@ -9,15 +9,24 @@ Tracked in Linear: [Project Candid](https://linear.app/cspurlock/project/project
 
 ## Status
 
-Three-tab shell (Feed, Post, Profile) with placeholder views, wired to a hosted
-Supabase backend. Accounts work: a user can sign up and log in. Feed and Post are
-still placeholders.
+MVP complete: sign up, log in, post a photo, and see it in the feed, all working
+end to end against the hosted backend. Also done: a full code-review pass
+(in-app account deletion, a real password policy, Swift 6 strict concurrency,
+CI, this README). In flight: the social graph and visibility model that will
+make the feed actually reflect who you follow, rather than showing every post
+to every signed-in user.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
 and publish. The image is uploaded first and the row written second, so a failure
 never leaves a post pointing at an image that does not exist. Blank captions are
 stored as NULL rather than an empty string.
+
+The Feed tab shows posts newest-first with pull-to-refresh and pagination. It
+refreshes itself when it goes stale (signed image URLs expire) and also right
+after you post, so a just-posted photo does not sit unseen for up to half an
+hour. Decoded images are cached by storage path rather than URL, so a refresh
+does not re-download every photo already on screen.
 
 The app root is session-gated: `RootView` shows the Log In screen when signed out
 and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
@@ -36,7 +45,6 @@ username from their `profiles` row, plus Log Out.
 
 - Xcode 26 or newer
 - iOS 17.0+ deployment target
-- No third-party dependencies yet
 
 ## Opening and running
 
@@ -67,10 +75,19 @@ request, against whichever iPhone simulator the runner's image happens to
 have available — it asks `simctl` rather than hardcoding a device name, so an
 image update can't break the build by renaming or dropping one.
 
-Unit tests live in `CandidTests/` and use Swift Testing. They cover the pure
-logic most likely to rot quietly: the error-mapping functions, which translate
-opaque Supabase errors into wording a person can act on, and the image
-downscaling arithmetic. Both have already regressed once.
+Unit tests live in `CandidTests/` and use Swift Testing. Most cover pure logic
+most likely to rot quietly: the error-mapping functions, which translate opaque
+Supabase errors into wording a person can act on; `UsernameRules`; and the
+image downscaling and downsampling arithmetic. The error mappers and the
+downscaling arithmetic have both already regressed once.
+
+`FeedServiceDecodingTests` goes further and exercises `FeedService.fetchPosts`
+itself against canned PostgREST and Storage responses, stubbed at the
+`URLProtocol` level (`CandidTests/Support/`) rather than mocked — what
+`FeedService`'s dependency-injected `SupabaseClient` (see Services below)
+makes possible. It pins the keyset cursor's byte-for-byte date handling and
+the `hasMore` logic, the two places a silent regression would otherwise only
+surface against a real project.
 
 ## Project layout
 
@@ -80,11 +97,15 @@ Candid.xcodeproj      Xcode project (uses synchronized folders — files on disk
 Config/               Build configuration; Secrets.xcconfig here is gitignored
 Candid/
   CandidApp.swift     App entry point
-  Models/             Profile
-  ViewModels/         SessionStore — mirrors the SDK's auth state
-  Services/           SupabaseService, AuthService, ProfileService
-  Views/              RootView (session gate), auth screens, RootTabView and tabs
-    Components/       Small shared form controls
+  Models/             FeedPost/FeedPage/FeedCursor, Profile, UsernameRules
+  ViewModels/         SessionStore (mirrors the SDK's auth state),
+                      FeedInvalidation (tells the feed to refresh after a post)
+  Services/           AppServices (DI container built at launch), SupabaseService,
+                      AuthService, ProfileService, PostService, FeedService,
+                      StorageService, ImageCache, ImageDownsampler
+  Views/              RootView (session gate), ConfigurationErrorView, auth
+                      screens, RootTabView and tabs
+    Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
 supabase/             CLI config and versioned migrations
@@ -99,6 +120,13 @@ duplicate bundle resources.
 
 The backend is a hosted Supabase project (no local stack). Schema changes are written
 as migrations under `supabase/migrations/` and pushed with the Supabase CLI.
+
+Migrations are history, not documentation: once applied, a migration's SQL and
+comments are never edited, even after a later one changes or drops what it
+describes — each new migration explains its own relationship to what came
+before in its own comments instead. For how things work *today*, read this
+section and Schema/Storage below, not the oldest migration that touches a
+table.
 
 | | |
 |---|---|
@@ -171,10 +199,14 @@ the sanitised database error is now reported as a failed creation whose username
 turn every server-side failure into a report of a user mistake.
 
 RLS is enabled on both tables. Reads are open to any authenticated user; inserts
-and updates are restricted to the caller's own rows. There are no delete policies,
-so deletes are denied outright. **These read policies are dev-only** — Candid is
-meant to show you your friends' posts, so reads will need to narrow to a friend
-graph once one exists. The migration says so at the top.
+and updates are restricted to the caller's own rows. Neither table has a delete
+policy, so a client can never delete a row directly — but `delete_own_account()`
+deletes the caller's own `auth.users` row, cascading to their `profiles` row and
+every `posts` row they own; see Account deletion below. Deleting a single post
+without deleting the whole account isn't possible yet. **These read policies
+are dev-only** — Candid is meant to show you your friends' posts, so reads will
+need to narrow to a friend graph once one exists. The migration says so at the
+top.
 
 `posts.image_path` is CHECK-constrained to the shape `{user_id}/{uuid}.jpg` with
 the first segment equal to the row's own `user_id`, so a post can only ever
@@ -188,11 +220,15 @@ own JWT is all it takes) and the feed would show that photo under their name.
 Post images live in the **private** `post-images` bucket (5 MB cap, `image/jpeg`
 only). Objects are laid out as `{user_id}/{uuid}.jpg`, and the insert policy
 requires the first path segment to equal the caller's `auth.uid()`, so nobody can
-write into another user's folder. A delete policy is scoped the same way, so a
-user can remove only their own objects: the client uses it to take back an upload
-whose post row failed to be written, and it is what deleting a post or an account
-will need. There is no update policy — posts are immutable, and an overwrite of a
-referenced object would silently change a post's photo.
+write into another user's folder. A delete policy is scoped the same way, and
+further requires the object to be **unreferenced** — no `posts` row may still
+point at it, checked via a `security definer` `image_is_referenced()` helper
+that stays exact even once reads narrow to a friend graph. The client uses it
+to take back an upload whose post row failed to be written, and account
+deletion uses it too — see below. Deleting a single post isn't possible yet;
+when it lands, it needs the same "row first, then object" ordering account
+deletion already uses. There is no update policy — posts are immutable, and an
+overwrite of a referenced object would silently change a post's photo.
 
 Because the bucket is private, reads go through short-lived signed URLs rather
 than permanent public ones. The durable identifier for an image is therefore its
@@ -211,6 +247,25 @@ by storage path rather than URL: a signed URL is different every time it is
 minted, which defeats `AsyncImage` and `URLCache` and had every refresh
 re-downloading every image. A freshly uploaded photo is seeded into the cache so
 the poster's own post appears without a download.
+
+### Account deletion
+
+`delete_own_account()` is a `security definer` RPC, callable by `authenticated`
+only, that deletes the caller's own `auth.users` row — the cascade takes their
+`profiles` row and every `posts` row they own with it. `ProfileService.deleteAccount()`
+calls it, then removes every object in the caller's storage folder.
+
+Order matters: the delete policy above refuses to remove an object a `posts`
+row still references, and every one of the account's images is still
+referenced until the RPC cascades those rows away — so storage cleanup has to
+happen *after* the RPC, not before. The JWT used for it stays valid regardless
+of the account row being gone, since PostgREST and Storage check its signature
+and expiry, not a live session row.
+
+A storage-cleanup failure after a successful RPC call isn't surfaced as an
+error to the person deleting their account — the account is already gone,
+which is what was asked for, and any objects left behind are harmless orphans
+nothing references any more.
 
 ### Auth configuration
 
@@ -265,5 +320,5 @@ supabase link --project-ref ztdggewgqaoaixjhttct
 - Bundle identifier: `com.firstzion.candid`
 - Dependencies: [supabase-swift](https://github.com/supabase/supabase-swift) via
   Swift Package Manager, pinned in `Package.resolved` (committed)
-- Swift language version: 5.0
+- Swift language version: 6.0, strict concurrency checking on throughout
 - UI is intentionally unstyled — visual design arrives in a later ticket.

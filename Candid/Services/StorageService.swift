@@ -77,8 +77,8 @@ struct StorageService {
         }
     }
 
-    /// Mints signed URLs for several objects in one request — what the feed
-    /// (SOL-13) uses instead of one round trip per post.
+    /// Mints signed URLs for several objects in one request — what
+    /// `FeedService` uses instead of one round trip per post.
     ///
     /// A path that fails to sign (e.g. the object went missing) is simply
     /// absent from the result rather than failing the whole batch; the caller
