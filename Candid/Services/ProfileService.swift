@@ -76,4 +76,63 @@ struct ProfileService {
         // server's detail in it. Use the server's own message.
         return .other(postgrestError.message)
     }
+
+    /// Permanently deletes the signed-in user's account: the `auth.users` row
+    /// (and by cascade, `profiles` and every `posts` row it owns), plus every
+    /// object in the user's storage folder. Does not sign out — the caller
+    /// does that once this returns, the same way `ProfileView`'s "Log Out"
+    /// already goes through `SessionStore` rather than a service.
+    ///
+    /// Order matters, and is the reverse of "clean up storage, then delete
+    /// the account": the delete policy on `storage.objects`
+    /// (20260904160000_guard_referenced_post_images.sql) refuses to remove an
+    /// object a `posts` row still references, and every one of this
+    /// account's images is still referenced until the RPC below cascades
+    /// those rows away. Calling it first, then cleaning up storage, is what
+    /// that policy requires. The JWT used for the storage calls stays valid
+    /// throughout — PostgREST and Storage verify its signature and expiry,
+    /// not a live session row, so it keeps working even after the account
+    /// row behind it is gone.
+    func deleteAccount() async throws {
+        let client = try SupabaseService.shared.client()
+
+        let userID: UUID
+        do {
+            userID = try await client.auth.session.user.id
+        } catch {
+            throw Self.mapSessionError(error)
+        }
+
+        do {
+            try await client.rpc("delete_own_account").execute()
+        } catch {
+            throw Self.mapProfileError(error)
+        }
+
+        // The account is already gone at this point, which is what "delete
+        // my account" asked for. A failure here leaves orphaned objects in
+        // storage — harmless, since nothing references them any more — so
+        // it is not worth surfacing as a failure of the request as a whole.
+        try? await Self.removeAllStorageObjects(forUserFolder: userID, client: client)
+    }
+
+    private static func removeAllStorageObjects(forUserFolder userID: UUID, client: SupabaseClient) async throws {
+        let folder = userID.uuidString.lowercased()
+        let pageSize = 100
+        var offset = 0
+
+        while true {
+            let page = try await client.storage
+                .from(StorageService.bucket)
+                .list(path: folder, options: SearchOptions(limit: pageSize, offset: offset))
+            guard !page.isEmpty else { return }
+
+            try await client.storage
+                .from(StorageService.bucket)
+                .remove(paths: page.map { "\(folder)/\($0.name)" })
+
+            if page.count < pageSize { return }
+            offset += pageSize
+        }
+    }
 }

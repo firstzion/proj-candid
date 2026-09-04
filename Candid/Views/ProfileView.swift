@@ -7,6 +7,10 @@ struct ProfileView: View {
     @State private var isSigningOut = false
     @State private var signOutError: String?
 
+    @State private var isShowingDeleteConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String?
+
     private enum ProfileState {
         case loading
         case loaded(Profile)
@@ -53,9 +57,35 @@ struct ProfileView: View {
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
             }
+
+            Button("Delete Account", role: .destructive) {
+                isShowingDeleteConfirmation = true
+            }
+            .disabled(isDeletingAccount)
+
+            if isDeletingAccount {
+                ProgressView()
+            }
+
+            if let deleteAccountError {
+                Text(deleteAccountError)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding()
         .task { await loadProfile() }
+        .confirmationDialog(
+            "Delete your account?",
+            isPresented: $isShowingDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Account", role: .destructive) {
+                Task { await deleteAccount() }
+            }
+        } message: {
+            Text("This permanently deletes your account and every photo you've posted. This can't be undone.")
+        }
     }
 
     private func loadProfile() async {
@@ -81,6 +111,23 @@ struct ProfileView: View {
         }
 
         isSigningOut = false
+    }
+
+    /// Deletes the account, then signs out through `SessionStore` exactly
+    /// like the "Log Out" button — the SDK's auth-state stream carries the
+    /// app back to the Log In screen either way.
+    private func deleteAccount() async {
+        isDeletingAccount = true
+        deleteAccountError = nil
+
+        do {
+            try await ProfileService().deleteAccount()
+            try await sessionStore.signOut()
+        } catch {
+            deleteAccountError = error.localizedDescription
+        }
+
+        isDeletingAccount = false
     }
 }
 
