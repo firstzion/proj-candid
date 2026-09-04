@@ -8,7 +8,7 @@ struct CandidApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(sessionStore)
-                .task { sessionStore.start() }
+                .task { await sessionStore.observe() }
         }
     }
 }

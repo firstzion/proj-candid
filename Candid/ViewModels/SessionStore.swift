@@ -31,30 +31,27 @@ final class SessionStore: ObservableObject {
 
     @Published private(set) var state: State = .loading
 
-    private var observationTask: Task<Void, Never>?
+    /// Mirrors the SDK's auth state for as long as the calling task lives.
+    ///
+    /// Run from `.task` on the root view: that task lasts the life of the
+    /// scene and is cancelled with it, which makes the observation structured
+    /// — no stored `Task` to clear on every exit path, no `deinit` to cancel
+    /// it, and SwiftUI restarts it if the root view is ever re-created. The
+    /// previous shape spawned an unstructured `Task` from inside `.task`
+    /// precisely to escape that lifetime, which read as a bug rather than a
+    /// decision.
+    func observe() async {
+        guard let client = try? SupabaseService.shared.client() else {
+            // Misconfigured build: treat as signed out so the app still
+            // renders. The config error surfaces on the first auth attempt.
+            update(from: nil)
+            return
+        }
 
-    /// Starts mirroring the SDK's auth state. Safe to call more than once.
-    func start() {
-        guard observationTask == nil else { return }
-
-        observationTask = Task { [weak self] in
-            // Clear the handle on every exit path so a later start() can
-            // resubscribe. Without this the finished task stays non-nil, the
-            // guard above turns start() into a no-op, and the app silently
-            // stops tracking auth state.
-            defer { self?.observationTask = nil }
-
-            guard let client = try? SupabaseService.shared.client() else {
-                // Misconfigured build: treat as signed out so the app still
-                // renders. The config error surfaces on the first auth attempt.
-                self?.state = .signedOut
-                return
-            }
-
-            for await (_, session) in client.auth.authStateChanges {
-                if Task.isCancelled { return }
-                self?.update(from: session)
-            }
+        // `AsyncStream` ends its iteration when the task is cancelled, so
+        // cancellation needs no check of its own.
+        for await (_, session) in client.auth.authStateChanges {
+            update(from: session)
         }
     }
 
@@ -78,9 +75,5 @@ final class SessionStore: ObservableObject {
     func signOut() async throws {
         let client = try SupabaseService.shared.client()
         try await client.auth.signOut()
-    }
-
-    deinit {
-        observationTask?.cancel()
     }
 }

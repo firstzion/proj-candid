@@ -3,12 +3,17 @@ import SwiftUI
 /// A submit button that swaps its label for a spinner while work is in flight.
 ///
 /// Extracted from the sign-up and log-in screens, which had grown identical
-/// copies of this. The compose screen picks it up when posting lands in SOL-11.
+/// copies of this; the compose screen uses it too.
 struct AsyncSubmitButton: View {
     let title: String
     let isSubmitting: Bool
     let isEnabled: Bool
     let action: () async -> Void
+
+    /// Set synchronously in the tap handler. The caller's `isSubmitting` only
+    /// flips once its action has started running, and two quick taps could
+    /// both enqueue a submission in that gap.
+    @State private var isRunning = false
 
     init(
         _ title: String,
@@ -24,7 +29,12 @@ struct AsyncSubmitButton: View {
 
     var body: some View {
         Button {
-            Task { await action() }
+            guard !isRunning else { return }
+            isRunning = true
+            Task {
+                await action()
+                isRunning = false
+            }
         } label: {
             if isSubmitting {
                 ProgressView()
@@ -32,7 +42,7 @@ struct AsyncSubmitButton: View {
                 Text(title)
             }
         }
-        .disabled(isSubmitting || !isEnabled)
+        .disabled(isRunning || isSubmitting || !isEnabled)
     }
 }
 
