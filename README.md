@@ -15,14 +15,19 @@ end to end against the hosted backend. Also done: a full code-review pass
 CI, this README). In flight: the social graph and visibility model that will
 make the feed actually reflect who you follow, rather than showing every post
 to every signed-in user. The graph itself is in — the `follows` table, the
-derived `mutuals` view and `FollowService` — with per-post visibility, the
-authorization rule, blocking and the follow UI still to come.
+derived `mutuals` view and `FollowService` — and so is per-post visibility,
+chosen at posting time and fixed from then on. The authorization rule that
+makes the feed honour both, blocking, and the follow UI are still to come.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
-and publish. The image is uploaded first and the row written second, so a failure
-never leaves a post pointing at an image that does not exist. Blank captions are
-stored as NULL rather than an empty string.
+choose who can see it — everyone who follows you, or friends only — and publish.
+The image is uploaded first and the row written second, so a failure never
+leaves a post pointing at an image that does not exist. Blank captions are
+stored as NULL rather than an empty string. The audience picker starts on
+Followers and then keeps whatever was chosen last rather than resetting after
+each post: of the two mistakes a reset invites, sending a friends-only photo to
+every follower is the one that can't be taken back.
 
 The Feed tab shows posts newest-first with pull-to-refresh and pagination. It
 refreshes itself when it goes stale (signed image URLs expire) and also right
@@ -183,7 +188,7 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | Table | Columns |
 |---|---|
 | `profiles` | `id` (PK → `auth.users`), `username` (unique, `^[a-z0-9_]{3,30}$`), `created_at` |
-| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable, ≤ 2,200 characters), `created_at` |
+| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable, ≤ 2,200 characters), `visibility` (`followers` \| `mutuals`, default `followers`, immutable), `created_at` |
 | `follows` | `follower_id` (→ `profiles`), `followee_id` (→ `profiles`), `created_at`; PK (`follower_id`, `followee_id`), CHECK `follower_id <> followee_id` |
 
 A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
@@ -208,6 +213,22 @@ also offers `unfollow`, `isFollowing`, `isMutual` (which reads `mutuals`) and
 `relationship(with:)`, which fetches both directions in one request. There is
 no follow UI yet.
 
+`posts.visibility` is the per-post audience: `followers` (anyone who follows
+the author) or `mutuals` ("friends only" in the app — people the author also
+follows back). It defaults to `followers`, deliberately the wider tier: a new
+account's audience is almost entirely one-way followers at first, so a
+`mutuals` default would hide its first posts from nearly everyone. It is
+immutable. A tier that could change means a photo someone already saw can
+vanish from under them, or one they could never see can surface at an old
+position in their feed, both worse than "delete and repost". Two things
+enforce that: `posts` has no update policy at all — nothing in the app updates
+a post — and a `before update` trigger refuses any change to `visibility`
+regardless of policy, so a caption-edit policy added later can't reopen it by
+accident. Until the `can_view_post()` rule lands (SOL-30) the column changes
+nothing a viewer can see; the feed marks `mutuals` posts "Friends only" so you
+can tell which audience a photo went to, and the app mirrors the enum in
+`PostVisibility`, whose raw values are the Postgres labels.
+
 Usernames are stored lowercase. The trigger lowercases and trims what the
 metadata carries, and a CHECK constraint enforces `^[a-z0-9_]{3,30}$`; because
 only lowercase is ever stored, the plain unique constraint is case-insensitive
@@ -228,9 +249,10 @@ the sanitised database error is now reported as a failed creation whose username
 turn every server-side failure into a report of a user mistake.
 
 RLS is enabled on all three tables. Reads are open to any authenticated user.
-On `profiles` and `posts`, inserts and updates are restricted to the caller's
-own rows, and neither has a delete policy, so a client can never delete a row
-directly — but `delete_own_account()` deletes the caller's own `auth.users`
+On `profiles`, inserts and updates are restricted to the caller's own rows; on
+`posts`, inserts are, and there is no update policy at all, since posts are
+immutable (see visibility above). Neither has a delete policy, so a client can
+never delete a row directly — but `delete_own_account()` deletes the caller's own `auth.users`
 row, cascading to their `profiles` row, every `posts` row they own and every
 `follows` edge in either direction; see Account deletion below. Deleting a
 single post without deleting the whole account isn't possible yet. On
@@ -384,11 +406,13 @@ The follow graph is seeded too: alice ↔ bob (the one mutual pair, so
 `mutuals` returns exactly two rows), carol → alice and ivan → alice (one-way),
 a light scattering of one-way edges among dave through heidi, and judy
 connected to nobody — the shapes the visibility rules need to be checked
-against. Blocking and a mix of visibility tiers belong here as well, but
-`blocks` ([SOL-31](https://linear.app/cspurlock/issue/SOL-31/blocking)) and
-`posts.visibility` ([SOL-29](https://linear.app/cspurlock/issue/SOL-29/post-visibility-column-followers-mutuals))
-don't exist yet; those sections are written out and commented, ready to
-uncomment once the tables land.
+against. Visibility is seeded deterministically: each account's third post is
+friends-only and the other two are followers-only, with the tier named in the
+caption, so a tester can tell which rows a one-way follower is supposed to be
+missing. Blocking belongs here as well, but `blocks`
+([SOL-31](https://linear.app/cspurlock/issue/SOL-31/blocking)) doesn't exist
+yet; that section is written out and commented, ready to uncomment once the
+table lands.
 
 ## Conventions
 

@@ -9,6 +9,13 @@ struct PostView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     @State private var caption = ""
+
+    /// Who can see the post. Starts at the tier the schema defaults to and
+    /// then keeps whatever was chosen last, rather than snapping back after
+    /// every post: of the two mistakes a reset invites, sending a friends-only
+    /// photo to every follower is the one that can't be taken back.
+    @State private var visibility: PostVisibility = .default
+
     @State private var isLoadingImage = false
     @State private var isPosting = false
     @State private var message: FormMessage?
@@ -60,6 +67,20 @@ struct PostView: View {
                     TextField("Optional", text: $caption, axis: .vertical)
                         .lineLimit(1...4)
                         .disabled(isPosting)
+                }
+
+                Section {
+                    Picker("Who can see this", selection: $visibility) {
+                        ForEach(PostVisibility.allCases, id: \.self) { tier in
+                            Text(tier.title).tag(tier)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(isPosting)
+                } header: {
+                    Text("Who can see this")
+                } footer: {
+                    Text("Friends are people you follow who follow you back. A post's audience can't be changed later — delete and repost instead.")
                 }
 
                 Section {
@@ -174,10 +195,11 @@ struct PostView: View {
         message = nil
 
         do {
-            try await services!.post.createPost(image: image, caption: caption)
+            try await services!.post.createPost(image: image, caption: caption, visibility: visibility)
             // Only reset once the row is actually written, so a failure leaves
             // the photo and caption in place to retry rather than discarding
-            // work the person would have to redo.
+            // work the person would have to redo. `visibility` deliberately
+            // stays as chosen — see its declaration.
             selectedImage = nil
             pickerItem = nil
             caption = ""

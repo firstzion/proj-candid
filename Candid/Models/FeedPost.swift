@@ -7,6 +7,10 @@ import Foundation
 struct FeedPost: Identifiable, Equatable {
     let id: UUID
 
+    /// The author's `profiles.id` — what the feed hands to a profile screen
+    /// when the username on a row is tapped.
+    let authorID: UUID
+
     /// The object path in the `post-images` bucket, `{user_id}/{uuid}.jpg`.
     let imagePath: String
 
@@ -19,6 +23,12 @@ struct FeedPost: Identifiable, Equatable {
     let caption: String?
     let createdAt: Date
     let username: String
+
+    /// Which audience the author chose. A viewer only ever receives posts
+    /// they are permitted to see, so this is information rather than a
+    /// filter: it tells them — and the author, on their own posts — whether a
+    /// photo went to everyone who follows the author or to friends only.
+    let visibility: PostVisibility
 
     /// The cursor for fetching the page after this post — see
     /// `FeedService.fetchPosts(before:limit:)`. Carried as a stored property,

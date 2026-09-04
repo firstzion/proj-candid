@@ -21,7 +21,12 @@ struct FeedServiceDecodingTests {
         let imagePath: String
         let createdAt: String
         let username: String
+        var visibility: PostVisibility = .followers
     }
+
+    /// Every fixture row's author. One id is enough: what is under test is
+    /// that `user_id` decodes into `FeedPost.authorID`, not who wrote what.
+    private static let authorID = UUID()
 
     @Test("fetchPosts decodes real PostgREST/Storage response shapes correctly")
     func fetchPostsDecoding() async throws {
@@ -32,11 +37,13 @@ struct FeedServiceDecodingTests {
         // that ISO8601DateFormatter would round up to `.910`, corrupting a
         // re-derived cursor into matching its own row forever. See
         // FeedCursor's doc comment.
+        // Also the one friends-only row, so both tiers are seen to decode.
         let pinnedRow = Row(
             id: UUID(),
             imagePath: "\(UUID().uuidString)/\(UUID().uuidString).jpg",
             createdAt: "2026-09-04T14:04:30.909561+00:00",
-            username: "alice"
+            username: "alice",
+            visibility: .mutuals
         )
 
         // The path the sign endpoint below reports as unsigned, to check
@@ -85,6 +92,11 @@ struct FeedServiceDecodingTests {
         // cursor safe to round-trip into the next page's filter.
         #expect(page1.posts[0].cursor.createdAt == pinnedRow.createdAt)
         #expect(page1.posts[0].id == pinnedRow.id)
+
+        // The author and the tier ride along with each row.
+        #expect(page1.posts[0].authorID == Self.authorID)
+        #expect(page1.posts[0].visibility == .mutuals)
+        #expect(page1.posts[1].visibility == .followers)
 
         // The unsigned row (index 5) is kept, with no URL, rather than
         // dropped and silently shortening the page.
@@ -160,7 +172,7 @@ struct FeedServiceDecodingTests {
 
     private static func rowsJSON(_ rows: [Row]) -> Data {
         let body = rows.map { row in
-            #"{"id":"\#(row.id.uuidString)","image_path":"\#(row.imagePath)","caption":null,"created_at":"\#(row.createdAt)","profiles":{"username":"\#(row.username)"}}"#
+            #"{"id":"\#(row.id.uuidString)","user_id":"\#(Self.authorID.uuidString.lowercased())","image_path":"\#(row.imagePath)","caption":null,"visibility":"\#(row.visibility.rawValue)","created_at":"\#(row.createdAt)","profiles":{"username":"\#(row.username)"}}"#
         }.joined(separator: ",")
         return Data("[\(body)]".utf8)
     }

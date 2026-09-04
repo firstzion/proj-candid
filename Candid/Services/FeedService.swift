@@ -30,7 +30,7 @@ struct FeedService {
         do {
             var query = client
                 .from("posts")
-                .select("id, image_path, caption, created_at, profiles(username)")
+                .select("id, user_id, image_path, caption, visibility, created_at, profiles(username)")
 
             if let cursor {
                 // Keyset pagination on (created_at, id) rather than
@@ -63,11 +63,13 @@ struct FeedService {
             let posts = pageRows.map { row in
                 FeedPost(
                     id: row.id,
+                    authorID: row.userID,
                     imagePath: row.imagePath,
                     imageURL: signedURLs[row.imagePath],
                     caption: row.caption,
                     createdAt: row.createdAt,
                     username: row.profiles.username,
+                    visibility: row.visibility,
                     cursor: FeedCursor(createdAt: row.createdAtRaw, id: row.id)
                 )
             }
@@ -97,8 +99,10 @@ struct FeedService {
 /// round-trips exactly into the next page's filter. See `FeedCursor`.
 private struct PostRow: Decodable {
     let id: UUID
+    let userID: UUID
     let imagePath: String
     let caption: String?
+    let visibility: PostVisibility
     let createdAt: Date
     let createdAtRaw: String
     let profiles: ProfileUsername
@@ -109,8 +113,10 @@ private struct PostRow: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case userID = "user_id"
         case imagePath = "image_path"
         case caption
+        case visibility
         case createdAt = "created_at"
         case profiles
     }
@@ -118,8 +124,10 @@ private struct PostRow: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
+        userID = try container.decode(UUID.self, forKey: .userID)
         imagePath = try container.decode(String.self, forKey: .imagePath)
         caption = try container.decodeIfPresent(String.self, forKey: .caption)
+        visibility = try container.decode(PostVisibility.self, forKey: .visibility)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         createdAtRaw = try container.decode(String.self, forKey: .createdAt)
         profiles = try container.decode(ProfileUsername.self, forKey: .profiles)

@@ -28,7 +28,20 @@ enum PostError: LocalizedError {
 struct PostService {
     let client: SupabaseClient
 
-    /// Uploads the image, then records the post.
+    /// The signed-in user's id, read fresh for every call.
+    ///
+    /// Defaults to the SDK session — `auth.session`, so an expired access
+    /// token is refreshed before the request rather than failing under RLS.
+    /// Tests inject a fixed id so the row a post produces can be pinned
+    /// without a live session, the same arrangement as `FollowService`.
+    private let currentUserID: @Sendable () async throws -> UUID
+
+    init(client: SupabaseClient, currentUserID: (@Sendable () async throws -> UUID)? = nil) {
+        self.client = client
+        self.currentUserID = currentUserID ?? { try await client.auth.session.user.id }
+    }
+
+    /// Uploads the image, then records the post for `visibility`'s audience.
     ///
     /// Order matters. Uploading first means a failure part-way leaves an unused
     /// object in storage but **no** row — a post is never written pointing at an
@@ -39,7 +52,10 @@ struct PostService {
     /// best effort, since the insert failure is the error worth reporting and a
     /// leaked object is the lesser problem if the delete fails too. Before the
     /// storage delete policy existed this was a slow, permanent leak.
-    func createPost(image: UIImage, caption: String) async throws {
+    ///
+    /// `visibility` is final: the database refuses to change it afterwards
+    /// (see `PostVisibility`), so there is no update counterpart to this.
+    func createPost(image: UIImage, caption: String, visibility: PostVisibility = .default) async throws {
         // Cheapest check first: refusing here costs nothing, whereas letting the
         // database's CHECK constraint refuse it would come after the image had
         // already been uploaded — an orphaned object for a long caption.
@@ -48,7 +64,7 @@ struct PostService {
 
         let userId: UUID
         do {
-            userId = try await client.auth.session.user.id
+            userId = try await currentUserID()
         } catch {
             throw Self.mapSessionError(error)
         }
@@ -62,7 +78,8 @@ struct PostService {
                     NewPost(
                         userId: userId,
                         imagePath: imagePath,
-                        caption: caption
+                        caption: caption,
+                        visibility: visibility
                     )
                 )
                 .execute()
@@ -132,15 +149,20 @@ struct PostService {
 }
 
 /// The insert payload. Separate from any read model: writes set only these
-/// three columns, and the database fills in id and created_at.
+/// four columns, and the database fills in id and created_at. `visibility` is
+/// always sent explicitly, even when it equals the column default, so the row
+/// records the person's choice rather than whatever the default happens to be
+/// on the day.
 private struct NewPost: Encodable {
     let userId: UUID
     let imagePath: String
     let caption: String?
+    let visibility: PostVisibility
 
     enum CodingKeys: String, CodingKey {
         case userId = "user_id"
         case imagePath = "image_path"
         case caption
+        case visibility
     }
 }

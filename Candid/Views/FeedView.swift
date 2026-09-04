@@ -204,8 +204,23 @@ private struct FeedPostRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(post.username)
-                .font(.headline)
+            HStack(alignment: .firstTextBaseline) {
+                Text(post.username)
+                    .font(.headline)
+
+                Spacer()
+
+                // Which audience the photo went to. Only the narrower tier is
+                // marked: a viewer sees a friends-only post because they are
+                // friends with the author, and the author sees which of their
+                // own posts went to whom. Followers posts are the default and
+                // say nothing.
+                if post.visibility == .mutuals {
+                    Label(PostVisibility.mutuals.title, systemImage: "person.2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             PostImageView(
                 path: post.imagePath,
