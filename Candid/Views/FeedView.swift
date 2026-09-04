@@ -3,6 +3,7 @@ import SwiftUI
 struct FeedView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.services) private var services
+    @Environment(FeedInvalidation.self) private var feedInvalidation
 
     @State private var posts: [FeedPost] = []
     @State private var phase: Phase = .loading
@@ -107,6 +108,12 @@ struct FeedView: View {
                 guard newPhase == .active, isStale else { return }
                 Task { await refresh() }
             }
+            .onChange(of: feedInvalidation.version) {
+                // A post just succeeded. Refresh regardless of `isStale` —
+                // the person expects to see it now, not up to half an hour
+                // from now.
+                Task { await refresh() }
+            }
         }
     }
 
@@ -189,26 +196,48 @@ struct FeedView: View {
 private struct FeedPostRow: View {
     let post: FeedPost
 
+    /// How long a post stays on a relative timestamp before switching to an
+    /// absolute date — a post from three months ago reading "12 wk" is not
+    /// more useful than "Jun 12", and stops changing every time the row
+    /// re-renders.
+    private static let relativeCutoff: TimeInterval = 7 * 24 * 60 * 60
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(post.username)
                 .font(.headline)
 
-            PostImageView(path: post.imagePath, url: post.imageURL)
+            PostImageView(
+                path: post.imagePath,
+                url: post.imageURL,
+                accessibilityLabel: post.caption ?? "Photo by \(post.username)"
+            )
 
             if let caption = post.caption {
                 Text(caption)
             }
 
-            Text(post.createdAt, style: .relative)
+            timestamp
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
+        // Reads as one element — "username, photo, caption, 5 minutes ago" —
+        // rather than four separate stops for VoiceOver to swipe through.
+        .accessibilityElement(children: .combine)
+    }
+
+    private var timestamp: Text {
+        if Date.now.timeIntervalSince(post.createdAt) > Self.relativeCutoff {
+            Text(post.createdAt, format: .dateTime.month().day())
+        } else {
+            Text(post.createdAt, format: .relative(presentation: .named))
+        }
     }
 }
 
 #Preview {
     FeedView()
         .environment(\.services, AppServices(client: .preview))
+        .environment(FeedInvalidation())
 }

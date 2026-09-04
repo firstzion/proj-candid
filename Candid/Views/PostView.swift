@@ -4,6 +4,7 @@ import UIKit
 
 struct PostView: View {
     @Environment(\.services) private var services
+    @Environment(FeedInvalidation.self) private var feedInvalidation
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
@@ -181,6 +182,9 @@ struct PostView: View {
             pickerItem = nil
             caption = ""
             message = .success("Posted.")
+            // Tells the Feed tab to refresh even if it isn't stale yet, so
+            // switching over shows this post instead of "where did it go?".
+            feedInvalidation.markStale()
         } catch {
             message = .failure(error.localizedDescription)
         }
@@ -236,4 +240,5 @@ private struct CameraPicker: UIViewControllerRepresentable {
 #Preview {
     PostView()
         .environment(\.services, AppServices(client: .preview))
+        .environment(FeedInvalidation())
 }

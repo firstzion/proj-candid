@@ -25,4 +25,5 @@ struct RootTabView: View {
     RootTabView()
         .environmentObject(SessionStore(client: .preview))
         .environment(\.services, AppServices(client: .preview))
+        .environment(FeedInvalidation())
 }

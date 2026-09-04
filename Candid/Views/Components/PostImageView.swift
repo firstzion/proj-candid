@@ -15,6 +15,12 @@ struct PostImageView: View {
     /// see `FeedPost.imageURL`.
     let url: URL?
 
+    /// What VoiceOver says once the image has loaded — the post's caption, or
+    /// a fallback naming who posted it. The loading and missing states below
+    /// have their own fixed wording regardless, since neither has content yet
+    /// to describe.
+    let accessibilityLabel: String
+
     @State private var phase: Phase
 
     private enum Phase {
@@ -23,9 +29,10 @@ struct PostImageView: View {
         case missing
     }
 
-    init(path: String, url: URL?) {
+    init(path: String, url: URL?, accessibilityLabel: String) {
         self.path = path
         self.url = url
+        self.accessibilityLabel = accessibilityLabel
         // A cache hit renders in the first frame; anything else starts as a
         // spinner and resolves in `load()`.
         if let cached = ImageCache.shared.cachedImage(for: path) {
@@ -42,9 +49,11 @@ struct PostImageView: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
+                    .accessibilityLabel(accessibilityLabel)
             case .loading:
                 ProgressView()
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .accessibilityLabel("Loading photo")
             case .missing:
                 // The object could not be signed or fetched — most likely it
                 // no longer exists. The post is still shown; see
@@ -53,6 +62,7 @@ struct PostImageView: View {
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .accessibilityLabel("Photo unavailable")
             }
         }
         // Keyed on the URL so a refresh that re-mints it re-runs this — and

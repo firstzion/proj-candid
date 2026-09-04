@@ -44,6 +44,7 @@ private struct ConfiguredRootScene: View {
     let client: SupabaseClient
 
     @StateObject private var sessionStore: SessionStore
+    @State private var feedInvalidation = FeedInvalidation()
 
     init(services: AppServices, client: SupabaseClient) {
         self.services = services
@@ -55,6 +56,7 @@ private struct ConfiguredRootScene: View {
         RootView()
             .environmentObject(sessionStore)
             .environment(\.services, services)
+            .environment(feedInvalidation)
             .task { await sessionStore.observe() }
             .onOpenURL { url in
                 Task { await handleAuthCallback(url) }
