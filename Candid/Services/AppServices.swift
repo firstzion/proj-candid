@@ -11,6 +11,7 @@ struct AppServices {
     let profile: ProfileService
     let post: PostService
     let feed: FeedService
+    let follow: FollowService
     let storage: StorageService
 
     init(client: SupabaseClient) {
@@ -18,6 +19,7 @@ struct AppServices {
         profile = ProfileService(client: client)
         post = PostService(client: client)
         feed = FeedService(client: client)
+        follow = FollowService(client: client)
         storage = StorageService(client: client)
     }
 }

@@ -14,7 +14,9 @@ end to end against the hosted backend. Also done: a full code-review pass
 (in-app account deletion, a real password policy, Swift 6 strict concurrency,
 CI, this README). In flight: the social graph and visibility model that will
 make the feed actually reflect who you follow, rather than showing every post
-to every signed-in user.
+to every signed-in user. The graph itself is in — the `follows` table, the
+derived `mutuals` view and `FollowService` — with per-post visibility, the
+authorization rule, blocking and the follow UI still to come.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -89,6 +91,14 @@ makes possible. It pins the keyset cursor's byte-for-byte date handling and
 the `hasMore` logic, the two places a silent regression would otherwise only
 surface against a real project.
 
+`FollowServiceTests` does the same for `FollowService`, pinning the *request*
+each method builds — table, HTTP method, filters, body — because a wrong filter
+there is a silent bug (unfollowing nobody, or everybody) that only a live
+project would otherwise reveal. The signed-in user's id is injected into the
+service under test, since a live session is the one thing the stub cannot
+stand in for. Both suites build their client with `TestSupabaseClient` in
+`CandidTests/Support/`.
+
 ## Project layout
 
 ```
@@ -97,12 +107,13 @@ Candid.xcodeproj      Xcode project (uses synchronized folders — files on disk
 Config/               Build configuration; Secrets.xcconfig here is gitignored
 Candid/
   CandidApp.swift     App entry point
-  Models/             FeedPost/FeedPage/FeedCursor, Profile, UsernameRules
+  Models/             FeedPost/FeedPage/FeedCursor, Profile, Relationship,
+                      UsernameRules
   ViewModels/         SessionStore (mirrors the SDK's auth state),
                       FeedInvalidation (tells the feed to refresh after a post)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
-                      StorageService, ImageCache, ImageDownsampler
+                      FollowService, StorageService, ImageCache, ImageDownsampler
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs
     Components/       PostImageView, shared form controls
@@ -173,11 +184,29 @@ build settings for keys it already knows about, and silently drops unknown ones.
 |---|---|
 | `profiles` | `id` (PK → `auth.users`), `username` (unique, `^[a-z0-9_]{3,30}$`), `created_at` |
 | `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable, ≤ 2,200 characters), `created_at` |
+| `follows` | `follower_id` (→ `profiles`), `followee_id` (→ `profiles`), `created_at`; PK (`follower_id`, `followee_id`), CHECK `follower_id <> followee_id` |
 
 A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
 taking `username` from the sign-up metadata and falling back to a generated
 placeholder (`user_` plus 25 hex characters of the user's id, to fit the length
-limit). Deleting an auth user cascades to their profile and posts.
+limit). Deleting an auth user cascades to their profile, posts and follow edges.
+
+`follows` is the social graph: one row per directional edge, where `(a, b)`
+means a follows b. Following is open — anyone can follow anyone, with no
+approval and no pending state. "Friends" means a mutual follow, and it is
+derived, never stored: the `mutuals` view is a self-join on `follows` that
+returns both `(user_id, mutual_id)` and its mirror, so "is a mutual with b" is
+one equality lookup, and it is the single definition of friendship that the
+visibility rule and any future ranking read from. It is a `security_invoker`
+view, so it runs under the caller's own RLS on `follows` rather than its
+owner's. There are no follower/following counter columns — `count(*)` is fine
+at this scale, and counters need triggers that will be wrong at least once.
+The composite primary key makes a duplicate follow impossible at the database;
+`FollowService.follow` treats that refusal as success, since the state asked
+for already holds and a double tap must not read as a failure. `FollowService`
+also offers `unfollow`, `isFollowing`, `isMutual` (which reads `mutuals`) and
+`relationship(with:)`, which fetches both directions in one request. There is
+no follow UI yet.
 
 Usernames are stored lowercase. The trigger lowercases and trims what the
 metadata carries, and a CHECK constraint enforces `^[a-z0-9_]{3,30}$`; because
@@ -198,15 +227,21 @@ the sanitised database error is now reported as a failed creation whose username
 *may* have been taken, rather than asserted as taken — that assertion used to
 turn every server-side failure into a report of a user mistake.
 
-RLS is enabled on both tables. Reads are open to any authenticated user; inserts
-and updates are restricted to the caller's own rows. Neither table has a delete
-policy, so a client can never delete a row directly — but `delete_own_account()`
-deletes the caller's own `auth.users` row, cascading to their `profiles` row and
-every `posts` row they own; see Account deletion below. Deleting a single post
-without deleting the whole account isn't possible yet. **These read policies
-are dev-only** — Candid is meant to show you your friends' posts, so reads will
-need to narrow to a friend graph once one exists. The migration says so at the
-top.
+RLS is enabled on all three tables. Reads are open to any authenticated user.
+On `profiles` and `posts`, inserts and updates are restricted to the caller's
+own rows, and neither has a delete policy, so a client can never delete a row
+directly — but `delete_own_account()` deletes the caller's own `auth.users`
+row, cascading to their `profiles` row, every `posts` row they own and every
+`follows` edge in either direction; see Account deletion below. Deleting a
+single post without deleting the whole account isn't possible yet. On
+`follows`, a user may insert and delete only edges where they are the
+follower — you can unfollow someone, you cannot remove one of your followers —
+and there is no update policy, since nothing on an edge can change. **The
+`profiles` and `posts` read policies are dev-only** — Candid is meant to show
+you your friends' posts, so those reads narrow to the follow graph when the
+`can_view_post()` rule lands (SOL-30). Follows themselves stay readable by
+every authenticated user on purpose: follower counts and the relationship line
+on a profile need edges the caller didn't create.
 
 `posts.image_path` is CHECK-constrained to the shape `{user_id}/{uuid}.jpg` with
 the first segment equal to the row's own `user_id`, so a post can only ever
@@ -345,14 +380,15 @@ or paste the file into the Dashboard's SQL Editor. It's idempotent: every run
 deletes and recreates everything scoped to the `@seed.candid.test` suffix
 first, so re-running never accumulates duplicates.
 
-The follow graph, blocking, and a mix of visibility tiers belong in this
-script too, but none of the three exist yet — `follows` and `blocks` are
-Milestone 7 ([SOL-27](https://linear.app/cspurlock/issue/SOL-27/follows-table-and-migration),
-[SOL-31](https://linear.app/cspurlock/issue/SOL-31/blocking)), and so is
-`posts.visibility` ([SOL-29](https://linear.app/cspurlock/issue/SOL-29/post-visibility-column-followers-mutuals)).
-The script has the intended shapes (a mutual pair, a one-way follow, an
-unconnected account) written out and commented, ready to uncomment once those
-tables land rather than designed from scratch then.
+The follow graph is seeded too: alice ↔ bob (the one mutual pair, so
+`mutuals` returns exactly two rows), carol → alice and ivan → alice (one-way),
+a light scattering of one-way edges among dave through heidi, and judy
+connected to nobody — the shapes the visibility rules need to be checked
+against. Blocking and a mix of visibility tiers belong here as well, but
+`blocks` ([SOL-31](https://linear.app/cspurlock/issue/SOL-31/blocking)) and
+`posts.visibility` ([SOL-29](https://linear.app/cspurlock/issue/SOL-29/post-visibility-column-followers-mutuals))
+don't exist yet; those sections are written out and commented, ready to
+uncomment once the tables land.
 
 ## Conventions
 

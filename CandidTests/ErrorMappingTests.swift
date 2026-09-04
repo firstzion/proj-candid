@@ -370,3 +370,99 @@ struct FeedErrorMappingTests {
         }
     }
 }
+
+@Suite("Follow error mapping")
+struct FollowErrorMappingTests {
+    /// follows_no_self_follow is the table's only CHECK constraint, so a
+    /// check_violation can mean exactly one thing.
+    @Test("a self-follow rejected by the CHECK constraint is named as such")
+    func selfFollow() {
+        let mapped = FollowService.mapFollowError(
+            PostgrestError(code: "23514", message: #"new row for relation "follows" violates check constraint "follows_no_self_follow""#)
+        )
+        guard case .cannotFollowSelf = mapped else {
+            Issue.record("expected .cannotFollowSelf, got \(mapped)")
+            return
+        }
+    }
+
+    @Test("following an account that no longer exists is reported as missing")
+    func deletedAccount() {
+        let mapped = FollowService.mapFollowError(
+            PostgrestError(code: "23503", message: #"insert or update on table "follows" violates foreign key constraint "follows_followee_id_fkey""#)
+        )
+        guard case .accountMissing = mapped else {
+            Issue.record("expected .accountMissing, got \(mapped)")
+            return
+        }
+    }
+
+    /// Once blocking lands, the insert policy refuses an edge across a block
+    /// and the refusal arrives exactly like this. The wording must stay
+    /// generic: a block is silent to the person on the other side of it.
+    @Test("an RLS refusal is reported without saying why")
+    func rlsRefusal() {
+        let mapped = FollowService.mapFollowError(
+            PostgrestError(code: "42501", message: #"new row violates row-level security policy for table "follows""#)
+        )
+        guard case .notPermitted = mapped else {
+            Issue.record("expected .notPermitted, got \(mapped)")
+            return
+        }
+        let wording = mapped.errorDescription?.lowercased() ?? ""
+        #expect(!wording.contains("block"))
+        #expect(!wording.contains("policy"))
+    }
+
+    /// Same boilerplate trap as the other PostgrestError mappers.
+    @Test("other PostgREST errors surface the server's message, not boilerplate")
+    func serverMessageSurvives() {
+        let mapped = FollowService.mapFollowError(
+            PostgrestError(code: "42P01", message: #"relation "public.follows" does not exist"#)
+        )
+        guard case .other(let message) = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+        #expect(message == #"relation "public.follows" does not exist"#)
+    }
+
+    @Test("a non-PostgREST error falls through")
+    func nonPostgrestError() {
+        let mapped = FollowService.mapFollowError(URLError(.timedOut))
+        guard case .other = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+    }
+
+    /// The composite primary key refusing a second identical edge. `follow`
+    /// treats this as success rather than an error — the state asked for
+    /// already holds — so recognising it precisely matters.
+    @Test("a duplicate edge is recognised by its unique_violation code alone")
+    func duplicateEdge() {
+        #expect(FollowService.isDuplicateEdge(
+            PostgrestError(code: "23505", message: #"duplicate key value violates unique constraint "follows_pkey""#)
+        ))
+        #expect(!FollowService.isDuplicateEdge(PostgrestError(code: "23514", message: "check_violation")))
+        #expect(!FollowService.isDuplicateEdge(URLError(.timedOut)))
+    }
+
+    @Test("a missing session is reported as not signed in")
+    func sessionMissing() {
+        let mapped = FollowService.mapSessionError(AuthError.sessionMissing)
+        guard case .notSignedIn = mapped else {
+            Issue.record("expected .notSignedIn, got \(mapped)")
+            return
+        }
+    }
+
+    @Test("a session that merely failed to refresh is not called not signed in")
+    func refreshFailureIsNotSignedOut() {
+        let mapped = FollowService.mapSessionError(URLError(.notConnectedToInternet))
+        guard case .other = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+    }
+}
