@@ -26,8 +26,8 @@
 -- -----------------------------------------------------------------------
 -- Reset: drop any previous run's seed data before recreating it
 -- -----------------------------------------------------------------------
--- auth.users -> profiles -> posts and follows all cascade on delete, so this
--- one statement is the whole reset.
+-- auth.users -> profiles -> posts, follows and blocks all cascade on delete,
+-- so this one statement is the whole reset.
 delete from auth.users where email like '%@seed.candid.test';
 
 -- -----------------------------------------------------------------------
@@ -130,7 +130,11 @@ insert into public.follows (follower_id, followee_id) values
     ('00000000-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000001'); -- ivan -> alice
 
 -- -----------------------------------------------------------------------
--- Blocking — blocked on SOL-31 (Milestone 7)
+-- Blocking (SOL-31)
 -- -----------------------------------------------------------------------
--- insert into public.blocks (blocker_id, blocked_id) values
---     ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005'); -- dave blocks erin
+-- One block, in one direction, between two accounts with no other tie: the
+-- shape the visibility rule's "blocked in either direction" check needs,
+-- tested from both sides. Inserting a block severs any follows between the
+-- pair (trigger); dave and erin have none, so the graph above is unchanged.
+insert into public.blocks (blocker_id, blocked_id) values
+    ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005'); -- dave blocks erin
