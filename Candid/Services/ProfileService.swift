@@ -74,6 +74,25 @@ struct ProfileService {
         }
     }
 
+    /// How many of `profileID`'s posts the caller can see — which is what a
+    /// profile shows (SOL-37). Counted by the server with a HEAD request under
+    /// RLS, so it is exact for the author, the followers tier for a one-way
+    /// follower and zero for a stranger; the true total is never sent to
+    /// anyone else, which is what makes "has no posts" and "has posts you
+    /// can't see" the same screen (SOL-40).
+    func postCount(for profileID: UUID) async throws -> Int {
+        do {
+            let response: PostgrestResponse<Void> = try await client
+                .from("posts")
+                .select("id", head: true, count: .exact)
+                .eq("user_id", value: profileID)
+                .execute()
+            return response.count ?? 0
+        } catch {
+            throw Self.mapProfileError(error)
+        }
+    }
+
     /// Distinguishes "nobody is signed in" from "signed in, but the session
     /// could not be refreshed just now" — typically no network. Both used to
     /// come out as `.notSignedIn`, contradicting the tabs the person was
@@ -108,7 +127,7 @@ struct ProfileService {
     /// Permanently deletes the signed-in user's account: the `auth.users` row
     /// (and by cascade, `profiles` and every `posts` row it owns), plus every
     /// object in the user's storage folder. Does not sign out — the caller
-    /// does that once this returns, the same way `ProfileView`'s "Log Out"
+    /// does that once this returns, the same way `ProfileScreen`'s "Log Out"
     /// already goes through `SessionStore` rather than a service.
     ///
     /// Order matters, and is the reverse of "clean up storage, then delete

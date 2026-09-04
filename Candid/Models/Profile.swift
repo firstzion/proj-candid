@@ -8,7 +8,7 @@ import Foundation
 ///
 /// `Hashable` so a profile can be a navigation destination value — tapping a
 /// username in the feed, or finding one on the Profile tab, pushes
-/// `UserProfileView` with it.
+/// `ProfileScreen` with it.
 struct Profile: Identifiable, Decodable, Hashable {
     let id: UUID
     let username: String

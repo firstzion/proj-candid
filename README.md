@@ -27,7 +27,9 @@ following counts are public, but the lists behind them are readable only by
 the people at either end of an edge and their mutuals (SOL-66). You can
 delete your own posts from the feed — long-press, confirm, and the row and its
 image are both gone (SOL-38) — and the upload pipeline is now proven rather
-than assumed to strip EXIF, location included (SOL-44).
+than assumed to strip EXIF, location included (SOL-44). The profile screen is
+real now: counts, a grid, and the follow lists where they may be read
+(SOL-37).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -73,12 +75,17 @@ reported at launch even when its access token has expired and the SDK refreshes
 it in the background. The SDK's legacy default refreshes *first* and reports no
 session at all if that fails, which sent a still-signed-in user launching
 offline to the Log In screen — and then bounced them back into the app when the
-auto-refresh eventually got through. The Profile tab shows the signed-in user's
-username from their `profiles` row, a "Find people" lookup by exact username,
-Log Out and Delete Account. Someone else's profile — from that lookup, or from
-tapping a username in the feed — shows where you stand (following, follows
-you, friends, blocked) with Follow/Unfollow and Block/Unblock; every control
-changes immediately and changes back with a message if the request fails. The
+auto-refresh eventually got through. One `ProfileScreen` serves every profile,
+yours and everyone else's (SOL-37): username, three counts — posts, followers,
+following — and a three-column grid of the person's posts, paginated like the
+feed and opening into `PostDetailView`. Your own adds a "Find people" lookup by
+exact username, Log Out and Delete Account; someone else's — from that lookup,
+from tapping a username in the feed, or from a follower list — shows where you
+stand (following, follows you, friends, blocked) with Follow/Unfollow and
+Block/Unblock; every control changes immediately and changes back with a
+message if the request fails. The post count and the grid are read under RLS,
+so they are the posts *you* can see; the two follow counts are public, and
+open into `FollowListView` only on your own profile or a mutual's. The
 lookup answers "No one by that name" for a typo, a name nobody has, and
 someone who has blocked you alike — deliberately, since a block is silent.
 
@@ -140,8 +147,10 @@ project would otherwise reveal. The signed-in user's id is injected into the
 service under test, since a live session is the one thing the stub cannot
 stand in for. `PostServiceRequestTests` pins the upload-then-row order of a
 new post and, for delete, the row-then-object order and the by-`id`-only
-filter; `ProfileServiceRequestTests` pins the exact-username lookup the same
-way. All of them build their client with `TestSupabaseClient` in
+filter; `ProfileServiceRequestTests` pins the exact-username lookup and the
+HEAD-with-count request behind a profile's post count the same way; the
+follow lists and the grid's author scope are pinned alongside the requests
+they extend. All of them build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
 The authorization rule itself is tested in SQL, not Swift.
@@ -178,7 +187,8 @@ Candid/
                       AuthService, ProfileService, PostService, FeedService,
                       FollowService, StorageService, ImageCache, ImageDownsampler
   Views/              RootView (session gate), ConfigurationErrorView, auth
-                      screens, RootTabView and tabs, UserProfileView
+                      screens, RootTabView and tabs, ProfileScreen (yours and
+                      everyone else's), FollowListView, PostDetailView
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -277,8 +287,10 @@ The composite primary key makes a duplicate follow impossible at the database;
 for already holds and a double tap must not read as a failure. `FollowService`
 also offers `unfollow`, `isFollowing`, `isMutual` (which reads `mutuals`),
 `relationship(with:)`, which fetches both directions in one request plus the
-caller's own block, and `counts(for:)`, which calls `follow_counts`.
-`UserProfileView` is the UI over all of it.
+caller's own block, `counts(for:)`, which calls `follow_counts`, and
+`followers(of:)` / `following(of:)`, which read `follows` joined with the
+profile at the other end — whatever RLS lets through, and nothing more.
+`ProfileScreen` is the UI over all of it.
 
 `posts.visibility` is the per-post audience: `followers` (anyone who follows
 the author) or `mutuals` ("friends only" in the app — people the author also
@@ -313,7 +325,7 @@ block, and a refused follow reaches the blocked person as an ordinary RLS
 error, which `FollowService` words as "Couldn't follow this account right
 now" — never why. `FollowService.block`, `unblock`, `isBlocking` and
 `relationship(with:)` (which reports `blocking`) are the client surface;
-`UserProfileView` puts Block behind a confirmation that says what will
+`ProfileScreen` puts Block behind a confirmation that says what will
 happen, and Unblock in its place once blocked.
 
 The helpers the policies call — `private.is_blocked_either_way(a, b)` and
@@ -406,7 +418,11 @@ is a `security_invoker` `feed` view that pre-filters to `user_id in (self,
 followees)` purely as a planner hint, with authorization still in
 `can_view_post()`. The feed's order `(created_at desc, id desc)` is backed by a
 matching composite index, `posts_created_at_id_idx`, which replaced the
-single-column one from the initial schema.
+single-column one from the initial schema. The profile grid pages one author's
+posts the same way — the feed query with a `user_id` filter, nothing else
+changed — backed by `posts_user_id_created_at_id_idx` `(user_id, created_at
+desc, id desc)`, which replaced the initial schema's `(user_id, created_at
+desc)` (SOL-37).
 
 `posts.image_path` is CHECK-constrained to the shape `{user_id}/{uuid}.jpg` with
 the first segment equal to the row's own `user_id`, so a post can only ever

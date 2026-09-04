@@ -34,7 +34,7 @@ enum FollowError: LocalizedError {
 /// The follow graph from the signed-in user's point of view: one directional
 /// edge per `follows` row, with "friends" derived by the `mutuals` view rather
 /// than stored anywhere, and blocks — the one relationship that overrides the
-/// graph — in `blocks`. `UserProfileView` is the UI over it (SOL-32).
+/// graph — in `blocks`. `ProfileScreen` is the UI over it (SOL-32, SOL-37).
 ///
 /// Since SOL-66 a `follows` row is readable only at either end or by a mutual
 /// of either end. Every read below asks for edges with the caller at one end,
@@ -232,6 +232,47 @@ struct FollowService {
         }
     }
 
+    /// The people who follow `profileID`, newest follow first: `follows` rows
+    /// joined with the profile at the follower end. Who may read them is the
+    /// database's call, not this method's — since SOL-66 an edge is readable
+    /// only at either end or by a mutual of either end, so from any other
+    /// seat this returns nothing. The profile screen only offers the list
+    /// where it can be read; RLS is what enforces it.
+    func followers(of profileID: UUID) async throws -> [Profile] {
+        try await people(
+            select: "profile:profiles!follows_follower_id_fkey(id,username)",
+            where: "followee_id", equals: profileID
+        )
+    }
+
+    /// The people `profileID` follows, newest follow first. Same rule as
+    /// `followers(of:)`.
+    func following(of profileID: UUID) async throws -> [Profile] {
+        try await people(
+            select: "profile:profiles!follows_followee_id_fkey(id,username)",
+            where: "follower_id", equals: profileID
+        )
+    }
+
+    /// One request: the edges matching `column = profileID`, each embedding
+    /// the profile at the other end under the alias `profile`. An embedded
+    /// profile the caller may not read comes back null — its owner has
+    /// blocked them — and is dropped rather than shown blank.
+    private func people(select: String, where column: String, equals profileID: UUID) async throws -> [Profile] {
+        do {
+            let rows: [FollowListRow] = try await client
+                .from("follows")
+                .select(select)
+                .eq(column, value: profileID)
+                .order("created_at", ascending: false)
+                .execute()
+                .value
+            return rows.compactMap(\.profile)
+        } catch {
+            throw Self.mapFollowError(error)
+        }
+    }
+
     /// The caller's own `blocks` row for `userID`, if any — the select policy
     /// would hide anyone else's regardless of filter.
     private func ownBlock(from me: UUID, of userID: UUID) async throws -> [BlockRow] {
@@ -336,6 +377,12 @@ private struct NewFollow: Encodable {
         case followerID = "follower_id"
         case followeeID = "followee_id"
     }
+}
+
+/// One `follows` row as the lists read it: only the embedded profile at the
+/// other end, nil when RLS hid it.
+private struct FollowListRow: Decodable {
+    let profile: Profile?
 }
 
 /// One `mutuals` row, of which only presence matters.

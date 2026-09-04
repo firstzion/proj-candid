@@ -321,6 +321,36 @@ struct FollowServiceTests {
         #expect(StubURLProtocol.requests.count == 1)
     }
 
+    /// Followers and following are `follows` rows joined with the profile at
+    /// the other end, one request each; who may read them is RLS's call
+    /// (SOL-66), not the client's. A follower whose profile is hidden from the
+    /// caller comes back as a null embed and is dropped, not shown blank.
+    @Test("followers and following read the edges joined with the right profile")
+    func followLists() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let service = Self.makeService()
+        StubURLProtocol.setHandler { _ in
+            .init(body: Data(#"[{"profile":{"id":"\#(Self.other.uuidString.lowercased())","username":"bob"}},{"profile":null}]"#.utf8))
+        }
+
+        let followers = try await service.followers(of: Self.me)
+        #expect(followers == [Profile(id: Self.other, username: "bob")])
+        var request = try #require(StubURLProtocol.requests.last)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.path == "/rest/v1/follows")
+        var query = Self.queryItems(of: request)
+        #expect(query["followee_id"] == "eq.\(Self.me.uuidString)")
+        #expect(query["select"] == "profile:profiles!follows_follower_id_fkey(id,username)")
+
+        let following = try await service.following(of: Self.me)
+        #expect(following == [Profile(id: Self.other, username: "bob")])
+        request = try #require(StubURLProtocol.requests.last)
+        query = Self.queryItems(of: request)
+        #expect(query["follower_id"] == "eq.\(Self.me.uuidString)")
+        #expect(query["select"] == "profile:profiles!follows_followee_id_fkey(id,username)")
+    }
+
     // MARK: - Fixtures
 
     private static func queryItems(of request: URLRequest) -> [String: String] {

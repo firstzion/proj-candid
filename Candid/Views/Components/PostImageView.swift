@@ -21,6 +21,15 @@ struct PostImageView: View {
     /// to describe.
     let accessibilityLabel: String
 
+    /// How the loaded image sits in its container: `.fit` for a feed row or
+    /// the detail view, `.fill` for a profile grid's square cell, which clips.
+    let contentMode: ContentMode
+
+    /// Height reserved while loading or when the image is missing. A feed row
+    /// wants a row-sized placeholder; a grid cell wants none, since its
+    /// square already has a size.
+    let placeholderMinHeight: CGFloat
+
     @State private var phase: Phase
 
     private enum Phase {
@@ -29,10 +38,18 @@ struct PostImageView: View {
         case missing
     }
 
-    init(path: String, url: URL?, accessibilityLabel: String) {
+    init(
+        path: String,
+        url: URL?,
+        accessibilityLabel: String,
+        contentMode: ContentMode = .fit,
+        placeholderMinHeight: CGFloat = 200
+    ) {
         self.path = path
         self.url = url
         self.accessibilityLabel = accessibilityLabel
+        self.contentMode = contentMode
+        self.placeholderMinHeight = placeholderMinHeight
         // A cache hit renders in the first frame; anything else starts as a
         // spinner and resolves in `load()`.
         if let cached = ImageCache.shared.cachedImage(for: path) {
@@ -48,11 +65,11 @@ struct PostImageView: View {
             case .loaded(let image):
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFit()
+                    .aspectRatio(contentMode: contentMode)
                     .accessibilityLabel(accessibilityLabel)
             case .loading:
                 ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .frame(maxWidth: .infinity, minHeight: placeholderMinHeight)
                     .accessibilityLabel("Loading photo")
             case .missing:
                 // The object could not be signed or fetched — most likely it
@@ -61,7 +78,7 @@ struct PostImageView: View {
                 Image(systemName: "photo")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .frame(maxWidth: .infinity, minHeight: placeholderMinHeight)
                     .accessibilityLabel("Photo unavailable")
             }
         }

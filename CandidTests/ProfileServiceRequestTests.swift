@@ -62,3 +62,32 @@ struct ProfileServiceRequestTests {
         #expect(StubURLProtocol.requests.isEmpty)
     }
 }
+
+/// `ProfileService.postCount(for:)`: "posts you can see", not "posts". The
+/// count is taken by the server under RLS — exact for the author, the
+/// followers tier for a one-way follower, zero for a stranger — and the true
+/// total is never sent to anyone else (SOL-37, SOL-40).
+///
+/// `.serialized`: `StubURLProtocol`'s state is process-global.
+@Suite(.serialized)
+struct ProfileServicePostCountTests {
+    private static let aliceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
+    @Test("postCount asks the server to count one author's rows, with a HEAD request")
+    func postCountIsAHeadRequest() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in
+            .init(statusCode: 200, body: Data(), headers: ["Content-Range": "0-1/2", "Content-Type": "application/json"])
+        }
+
+        let count = try await ProfileService(client: TestSupabaseClient.make()).postCount(for: Self.aliceID)
+        #expect(count == 2)
+
+        let request = try #require(StubURLProtocol.requests.last)
+        #expect(request.httpMethod == "HEAD")
+        #expect(request.url?.path == "/rest/v1/posts")
+        #expect(request.queryParameters["user_id"] == "eq.\(Self.aliceID.uuidString)")
+        #expect(request.value(forHTTPHeaderField: "Prefer")?.contains("count=exact") == true)
+    }
+}

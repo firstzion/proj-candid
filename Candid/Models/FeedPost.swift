@@ -4,7 +4,10 @@ import Foundation
 /// `profiles.username`, carrying both the image's storage path — its durable
 /// identity, which `ImageCache` keys on — and a ready-to-display signed URL
 /// for fetching it, minted by `StorageService` and different every time.
-struct FeedPost: Identifiable, Equatable {
+///
+/// `Hashable` so a post can be a navigation destination value — a grid cell
+/// on a profile pushes `PostDetailView` with it.
+struct FeedPost: Identifiable, Hashable {
     let id: UUID
 
     /// The author's `profiles.id` — what the feed hands to a profile screen
@@ -62,7 +65,7 @@ struct FeedPage: Equatable {
 /// `created_at < cursor` against itself and is returned again forever.
 /// Passing the original text straight back through as the filter value
 /// round-trips byte-for-byte and sidesteps the whole class of bug.
-struct FeedCursor: Equatable {
+struct FeedCursor: Hashable {
     let createdAt: String
     let id: UUID
 }

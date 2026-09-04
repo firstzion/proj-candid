@@ -144,6 +144,37 @@ struct FeedServiceDecodingTests {
         }
     }
 
+    /// The profile grid is the feed query with an author filter, not a second
+    /// query: same select, same order, same keyset, same page size. RLS still
+    /// decides which of the author's rows exist for the caller (SOL-37).
+    @Test("fetchPosts(by:) adds an author filter and changes nothing else")
+    func authorScope() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in .init(body: Data("[]".utf8)) }
+
+        let author = UUID()
+        let cursor = FeedCursor(createdAt: "2026-09-04T14:04:30.909561+00:00", id: UUID())
+        let feedService = FeedService(client: TestSupabaseClient.make())
+
+        let page = try await feedService.fetchPosts(by: author, before: cursor)
+        #expect(page.posts.isEmpty)
+        #expect(page.hasMore == false)
+
+        let scoped = try #require(StubURLProtocol.requests.last { $0.url?.path == "/rest/v1/posts" })
+        let query = scoped.queryParameters
+        #expect(query["user_id"] == "eq.\(author.uuidString)")
+        #expect(query["limit"] == "\(FeedService.defaultLimit + 1)")
+        #expect(query["order"]?.hasPrefix("created_at.desc") == true)
+        #expect(query["order"]?.contains("id.desc") == true)
+        #expect(query["or"]?.contains("created_at.lt.\(cursor.createdAt)") == true)
+
+        // Without an author, the same query carries no user_id filter at all.
+        _ = try await feedService.fetchPosts()
+        let unscoped = try #require(StubURLProtocol.requests.last { $0.url?.path == "/rest/v1/posts" })
+        #expect(unscoped.queryParameters["user_id"] == nil)
+    }
+
     // MARK: - Fixtures
 
     /// A distinct, valid `timestamptz` string `index` seconds before a fixed

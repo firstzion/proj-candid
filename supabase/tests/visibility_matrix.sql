@@ -23,9 +23,10 @@
 -- removes the pair" (10), the profile and re-follow rules from SOL-31
 -- (11, 12), the feed's own query (13), follower-list privacy from SOL-66
 -- (14-16: an edge is readable at either end or by a mutual of either end,
--- and the counts are public through follow_counts()), and deleting a post
--- from SOL-38 (17: only the author, and the object only once the row is
--- gone).
+-- and the counts are public through follow_counts()), deleting a post from
+-- SOL-38 (17: only the author, and the object only once the row is gone),
+-- and the profile's post count from SOL-37 (18: counted under RLS, so it is
+-- "the posts you can see").
 
 begin;
 
@@ -227,6 +228,21 @@ begin
     select f.followers, f.following into n, m from public.follow_counts(judy) f;
     assert n = 0 and m = 0, format('case 16: follow_counts(judy) should be 0 / 0, is %s / %s', n, m);
 
+    -- 18: the profile's post count is "posts you can see" (SOL-37): a count
+    -- of one author's rows under RLS is exact for the author, the followers
+    -- tier for a one-way follower and zero for a stranger. The true total is
+    -- never computed for anyone else, which is what makes "no posts" and
+    -- "posts you can't see" the same screen (SOL-40).
+    perform pg_temp.act_as(carol);
+    select count(*) into n from public.posts where user_id = alice;
+    assert n = 2, format('case 18: carol''s count of alice''s posts should be 2, is %s', n);
+    perform pg_temp.act_as(bob);
+    select count(*) into n from public.posts where user_id = alice;
+    assert n = 3, format('case 18: bob''s count of alice''s posts should be 3, is %s', n);
+    perform pg_temp.act_as(judy);
+    select count(*) into n from public.posts where user_id = alice;
+    assert n = 0, format('case 18: judy''s count of alice''s posts should be 0, is %s', n);
+
     -- 10: breaking mutuality takes effect at once — bob's mutuals post leaves
     -- alice's view the moment bob stops following her, while his followers
     -- posts stay, since alice still follows him.
@@ -289,6 +305,14 @@ begin
         'exposure: authenticated cannot execute follow_counts';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
+
+    -- Structure: the two keyset indexes the feed and the profile grid page on.
+    assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'posts_created_at_id_idx'),
+        'structure: posts_created_at_id_idx is missing';
+    assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'posts_user_id_created_at_id_idx'),
+        'structure: posts_user_id_created_at_id_idx is missing';
+    assert not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'posts_user_id_created_at_idx'),
+        'structure: the old per-author index posts_user_id_created_at_idx should be gone';
 end;
 $$;
 

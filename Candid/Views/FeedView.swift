@@ -110,7 +110,7 @@ struct FeedView: View {
             }
             .navigationTitle("Feed")
             .navigationDestination(item: $selectedProfile) { profile in
-                UserProfileView(profile: profile)
+                ProfileScreen(profile: profile)
             }
             .confirmationDialog(
                 "Delete this post?",

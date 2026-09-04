@@ -27,17 +27,31 @@ struct FeedService {
     /// below is unaffected. Restating the rule here would be a second copy to
     /// get wrong; see the README's Schema section (SOL-33).
     ///
+    /// Pass `by` to scope the page to one author — the profile grid (SOL-37).
+    /// That is a *scope*, not a rule: the same query, the same order and
+    /// cursor, one filter added, and RLS still decides which of that author's
+    /// rows exist for the caller. A one-way follower's grid of someone shows
+    /// exactly the posts their feed would.
+    ///
     /// Pass the previous page's last post's `cursor` as `before` to fetch the
     /// next page; omit it for the first page. The query asks for `limit + 1`
     /// rows and returns at most `limit`; whether the extra row came back is
     /// what makes `FeedPage.hasMore` exact rather than a guess from the page
     /// length. An empty `posts` table (or an exhausted cursor) returns an
     /// empty page rather than throwing.
-    func fetchPosts(before cursor: FeedCursor? = nil, limit: Int = FeedService.defaultLimit) async throws -> FeedPage {
+    func fetchPosts(
+        by authorID: UUID? = nil,
+        before cursor: FeedCursor? = nil,
+        limit: Int = FeedService.defaultLimit
+    ) async throws -> FeedPage {
         do {
             var query = client
                 .from("posts")
                 .select("id, user_id, image_path, caption, visibility, created_at, profiles(username)")
+
+            if let authorID {
+                query = query.eq("user_id", value: authorID)
+            }
 
             if let cursor {
                 // Keyset pagination on (created_at, id) rather than
