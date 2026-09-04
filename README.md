@@ -57,9 +57,10 @@ Candid/
 supabase/             CLI config and versioned migrations
 ```
 
-Empty folders are held in git by a `.gitkeep` file. These are excluded from the build
-via `EXCLUDED_SOURCE_FILE_NAMES`, since Xcode's synchronized folders would otherwise
-copy them into the app bundle.
+The project uses Xcode's synchronized folders, which sweep in *every* file under
+`Candid/` — dotfiles included. If you ever need to keep an empty folder in git with a
+`.gitkeep`, add it to `EXCLUDED_SOURCE_FILE_NAMES` too, or the build fails on
+duplicate bundle resources.
 
 ## Backend
 

@@ -28,6 +28,12 @@ final class SessionStore: ObservableObject {
         guard observationTask == nil else { return }
 
         observationTask = Task { [weak self] in
+            // Clear the handle on every exit path so a later start() can
+            // resubscribe. Without this the finished task stays non-nil, the
+            // guard above turns start() into a no-op, and the app silently
+            // stops tracking auth state.
+            defer { self?.observationTask = nil }
+
             guard let client = try? SupabaseService.shared.client() else {
                 // Misconfigured build: treat as signed out so the app still
                 // renders. The config error surfaces on the first auth attempt.

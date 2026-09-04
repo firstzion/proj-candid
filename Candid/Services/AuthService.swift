@@ -49,11 +49,6 @@ enum SignInError: LocalizedError {
     }
 }
 
-struct SignInResult {
-    let userID: UUID
-    let email: String?
-}
-
 struct SignUpResult {
     let userID: UUID
     /// False when the project still requires email confirmation, in which case
@@ -82,73 +77,98 @@ struct AuthService {
         }
     }
 
-    func signIn(email: String, password: String) async throws -> SignInResult {
+    /// Signs in. Deliberately returns nothing: `SessionStore` is the single
+    /// source of truth for who is signed in, and the SDK's auth-state stream
+    /// delivers the new session there. Returning identity here too would give
+    /// the app two places to read it from.
+    func signIn(email: String, password: String) async throws {
         let client = try SupabaseService.shared.client()
         let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
-            let session = try await client.auth.signIn(email: email, password: password)
-            return SignInResult(userID: session.user.id, email: session.user.email)
+            try await client.auth.signIn(email: email, password: password)
         } catch {
             throw Self.mapSignInError(error)
         }
     }
 
-    /// The session the SDK is currently holding, if any.
+    /// Translates Supabase's log-in errors into something a person can act on.
     ///
-    /// Reads straight from the SDK rather than caching: supabase-swift persists
-    /// the session in the Keychain and refreshes it on its own
-    /// (`defaultLocalStorage` is `KeychainLocalStorage`, `autoRefreshToken`
-    /// defaults to true), so there is no custom persistence to build.
-    func currentSessionEmail() -> String? {
-        guard let client = try? SupabaseService.shared.client() else { return nil }
-        return client.auth.currentSession?.user.email
-    }
-
+    /// Matches on `AuthError.errorCode` rather than on message text, so
+    /// rewording on Supabase's side cannot silently break the mapping.
     static func mapSignInError(_ error: Error) -> SignInError {
-        let haystack = error.localizedDescription.lowercased()
+        let message = error.localizedDescription
 
-        if haystack.contains("invalid login credentials")
-            || haystack.contains("invalid credentials") {
+        guard let authError = error as? AuthError else {
+            return .other(message)
+        }
+
+        switch authError.errorCode {
+        case .invalidCredentials:
             return .invalidCredentials
-        }
-
-        if haystack.contains("email not confirmed") {
+        case .emailNotConfirmed:
             return .emailNotConfirmed
+        default:
+            return .other(message)
         }
-
-        return .other(error.localizedDescription)
     }
 
-    /// Translates Supabase's API errors into something a person can act on.
+    /// Translates Supabase's sign-up errors into something a person can act on.
+    ///
+    /// Matches on `AuthError.errorCode` rather than on message text, with one
+    /// unavoidable exception noted below.
     static func mapSignUpError(_ error: Error) -> SignUpError {
         let message = error.localizedDescription
-        let haystack = message.lowercased()
 
-        // The profiles trigger inserts the username, so a duplicate username
-        // fails inside the trigger. Supabase reports that as a generic
-        // "Database error saving new user". username is the only unique
-        // constraint that insert can violate, so attribute it to the username.
-        if haystack.contains("database error saving new user")
-            || haystack.contains("profiles_username_key")
-            || haystack.contains("duplicate key value") {
+        guard let authError = error as? AuthError else {
+            return .other(message)
+        }
+
+        // A duplicate username fails inside the profiles trigger, and Supabase
+        // has no dedicated error code for it. What comes back depends on
+        // whether the caller sends an API-version header:
+        //
+        //   with the header (what the SDK sends, so what we see in the app):
+        //     message "Database error saving new user", code unexpected_failure
+        //
+        //   without it (e.g. plain curl), the raw Postgres error:
+        //     {"code": "23505",
+        //      "message": "duplicate key value violates unique constraint
+        //                  \"profiles_username_key\""}
+        //
+        // Match any of the three. The sanitized sentence is the one that
+        // actually reaches the app today; the SQLSTATE and the constraint name
+        // are standard Postgres and our own migration respectively, and cover
+        // the versionless shape. username is the only unique constraint this
+        // insert can violate.
+        let lowercased = message.lowercased()
+        if authError.errorCode == Self.postgresUniqueViolation
+            || message.contains("profiles_username_key")
+            || lowercased.contains("database error saving new user") {
             return .usernameTaken
         }
 
-        if haystack.contains("already registered")
-            || haystack.contains("already been registered")
-            || haystack.contains("user already exists") {
+        switch authError.errorCode {
+        case .emailExists, .userAlreadyExists:
             return .emailAlreadyRegistered
-        }
 
-        if haystack.contains("password") {
+        case .weakPassword:
+            // The server explains what is wrong with the password (length,
+            // character classes); pass that through rather than inventing
+            // wording that could contradict the project's actual policy.
             return .weakPassword(message)
-        }
 
-        if haystack.contains("email") && haystack.contains("invalid") {
-            return .invalidEmail
-        }
+        case .validationFailed:
+            // Only email format is validated today, but the code is generic,
+            // so confirm before claiming it is the email.
+            return lowercased.contains("email") ? .invalidEmail : .other(message)
 
-        return .other(message)
+        default:
+            return .other(message)
+        }
     }
+
+    /// Postgres SQLSTATE for `unique_violation`. Not a Supabase auth code — it
+    /// arrives when a database constraint rejects the trigger's insert.
+    private static let postgresUniqueViolation = ErrorCode("23505")
 }

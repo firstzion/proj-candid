@@ -47,17 +47,20 @@ struct ProfileService {
     }
 
     static func mapProfileError(_ error: Error) -> ProfileError {
-        let haystack = error.localizedDescription.lowercased()
+        guard let postgrestError = error as? PostgrestError else {
+            return .other(error.localizedDescription)
+        }
 
         // PostgREST returns PGRST116 when `.single()` matches no rows, which
         // here means either the trigger did not provision a profile or RLS
         // hid it.
-        if haystack.contains("pgrst116")
-            || haystack.contains("multiple (or no) rows returned")
-            || haystack.contains("0 rows") {
+        if postgrestError.code == "PGRST116" {
             return .profileMissing
         }
 
-        return .other(error.localizedDescription)
+        // PostgrestError does not conform to LocalizedError, so its
+        // localizedDescription is a generic bridged string with none of the
+        // server's detail in it. Use the server's own message.
+        return .other(postgrestError.message)
     }
 }

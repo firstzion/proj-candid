@@ -7,11 +7,17 @@ struct SignUpView: View {
     @State private var password = ""
     @State private var username = ""
     @State private var isSubmitting = false
-    @State private var message: Message?
+    @State private var outcome: Outcome?
 
-    private enum Message {
-        case success(String)
-        case failure(String)
+    /// There is no success case. A sign-up that returns a session emits on the
+    /// SDK's auth-state stream, `RootView` swaps to the main tabs, and this
+    /// view is torn down before any success message could be read. The one
+    /// non-failure outcome worth reporting is a sign-up that succeeds *without*
+    /// a session, which happens only if email confirmation is re-enabled on the
+    /// project.
+    private enum Outcome {
+        case awaitingEmailConfirmation
+        case failed(String)
     }
 
     var body: some View {
@@ -45,12 +51,13 @@ struct SignUpView: View {
                 .disabled(!canSubmit)
             }
 
-            if let message {
+            if let outcome {
                 Section {
-                    switch message {
-                    case .success(let text):
-                        Text(text).foregroundStyle(.green)
-                    case .failure(let text):
+                    switch outcome {
+                    case .awaitingEmailConfirmation:
+                        Text("Account created. Confirm your email address before logging in.")
+                            .foregroundStyle(.orange)
+                    case .failed(let text):
                         Text(text).foregroundStyle(.red)
                     }
                 }
@@ -74,7 +81,7 @@ struct SignUpView: View {
 
     private func submit() async {
         isSubmitting = true
-        message = nil
+        outcome = nil
 
         do {
             let result = try await AuthService().signUp(
@@ -82,13 +89,10 @@ struct SignUpView: View {
                 password: password,
                 username: username
             )
-            message = .success(
-                result.hasActiveSession
-                    ? "Signed up and logged in."
-                    : "Account created, but no session — email confirmation is still enabled on the project."
-            )
+            // On success with a session, RootView takes over and this is moot.
+            outcome = result.hasActiveSession ? nil : .awaitingEmailConfirmation
         } catch {
-            message = .failure(error.localizedDescription)
+            outcome = .failed(error.localizedDescription)
         }
 
         isSubmitting = false

@@ -4,12 +4,11 @@ struct LogInView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isSubmitting = false
-    @State private var message: Message?
 
-    private enum Message {
-        case success(String)
-        case failure(String)
-    }
+    /// Only failures are shown. A successful log in emits on the SDK's
+    /// auth-state stream, `RootView` swaps to the main tabs, and this view is
+    /// torn down — so a success message here would never be read.
+    @State private var errorMessage: String?
 
     var body: some View {
         Form {
@@ -37,14 +36,9 @@ struct LogInView: View {
                 .disabled(!canSubmit)
             }
 
-            if let message {
+            if let errorMessage {
                 Section {
-                    switch message {
-                    case .success(let text):
-                        Text(text).foregroundStyle(.green)
-                    case .failure(let text):
-                        Text(text).foregroundStyle(.red)
-                    }
+                    Text(errorMessage).foregroundStyle(.red)
                 }
             }
 
@@ -65,13 +59,12 @@ struct LogInView: View {
 
     private func submit() async {
         isSubmitting = true
-        message = nil
+        errorMessage = nil
 
         do {
-            let result = try await AuthService().signIn(email: email, password: password)
-            message = .success("Logged in as \(result.email ?? "unknown").")
+            try await AuthService().signIn(email: email, password: password)
         } catch {
-            message = .failure(error.localizedDescription)
+            errorMessage = error.localizedDescription
         }
 
         isSubmitting = false
