@@ -58,21 +58,26 @@ struct SignUpErrorMappingTests {
         #expect(detail.contains("at least 6 characters"))
     }
 
-    /// A duplicate username fails inside the profiles trigger. Supabase has no
-    /// error code for it, and the shape depends on whether the caller sent an
-    /// API-version header. Both forms must map to the same message — a
-    /// regression here previously reached the user as raw server text.
-    @Test("duplicate username is recognised in its sanitized form")
-    func duplicateUsernameSanitized() {
+    /// GoTrue returns this one sanitised sentence for *any* failure inside the
+    /// sign-up transaction — a lost race for a username, but equally a rejected
+    /// CHECK, a broken trigger or an outage. It used to map to "username
+    /// taken", which turned every server-side failure into a report of a user
+    /// mistake. A regression here previously reached the user as raw server
+    /// text, so the shape is pinned either way.
+    @Test("the sanitised database error is a failed creation, not a taken username")
+    func sanitizedDatabaseError() {
         let mapped = AuthService.mapSignUpError(
             apiError(message: "Database error saving new user", code: .unexpectedFailure)
         )
-        guard case .usernameTaken = mapped else {
-            Issue.record("expected .usernameTaken, got \(mapped)")
+        guard case .accountCreationFailed = mapped else {
+            Issue.record("expected .accountCreationFailed, got \(mapped)")
             return
         }
+        // The wording must leave both causes open.
+        #expect(mapped.errorDescription?.contains("may have") == true)
     }
 
+    /// The versionless shape names the constraint, so it is unambiguous.
     @Test("duplicate username is recognised in its raw Postgres form")
     func duplicateUsernameRaw() {
         let mapped = AuthService.mapSignUpError(
@@ -106,6 +111,20 @@ struct SignUpErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
+    }
+
+    /// The availability pre-check speaks PostgREST, not GoTrue. PostgrestError
+    /// is not a LocalizedError, so its localizedDescription is boilerplate.
+    @Test("a PostgREST error from the availability check surfaces the server's message")
+    func postgrestErrorSurvives() {
+        let mapped = AuthService.mapSignUpError(
+            PostgrestError(code: "42883", message: "function public.username_available(text) does not exist")
+        )
+        guard case .other(let message) = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+        #expect(message == "function public.username_available(text) does not exist")
     }
 }
 

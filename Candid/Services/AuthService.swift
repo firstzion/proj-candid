@@ -11,6 +11,7 @@ enum SignUpError: LocalizedError {
     case invalidUsername(String)
     case invalidEmail
     case weakPassword(String)
+    case accountCreationFailed
     case other(String)
 
     var errorDescription: String? {
@@ -26,6 +27,13 @@ enum SignUpError: LocalizedError {
             return "That email address doesn't look valid."
         case .weakPassword(let detail):
             return detail
+        case .accountCreationFailed:
+            // GoTrue's sanitised "Database error saving new user" — see
+            // `mapSignUpError`. With the format validated and availability
+            // checked first, this is either a lost race for the username or a
+            // genuine server-side failure; the wording leaves both open rather
+            // than asserting the username was taken.
+            return "The account couldn't be created. That username may have just been taken — try another, or try again in a moment."
         case .other(let message):
             return message
         }
@@ -73,6 +81,13 @@ struct AuthService {
             throw SignUpError.invalidUsername(problem)
         }
 
+        // Ask before creating the auth user, for the same reason: a duplicate
+        // that fails inside the trigger is unrecognisable by the time it gets
+        // here. Advisory only — see `isUsernameAvailable`.
+        guard try await isUsernameAvailable(username, client: client) else {
+            throw SignUpError.usernameTaken
+        }
+
         do {
             let response = try await client.auth.signUp(
                 email: email,
@@ -83,6 +98,27 @@ struct AuthService {
                 userID: response.user.id,
                 hasActiveSession: response.session != nil
             )
+        } catch {
+            throw Self.mapSignUpError(error)
+        }
+    }
+
+    /// Asks the database whether `username` can still be claimed, through the
+    /// `username_available` function. The person asking has no session yet,
+    /// and `profiles` is readable only by `authenticated`, so a plain query
+    /// would see nothing; the function runs as its definer and returns one
+    /// bit.
+    ///
+    /// The answer is advisory. Two people can be told "free" at the same
+    /// moment and one of them then loses the race inside the sign-up trigger;
+    /// `mapSignUpError` words that outcome as a possibly-taken username rather
+    /// than asserting it.
+    private func isUsernameAvailable(_ username: String, client: SupabaseClient) async throws -> Bool {
+        do {
+            return try await client
+                .rpc("username_available", params: ["candidate": username])
+                .execute()
+                .value
         } catch {
             throw Self.mapSignUpError(error)
         }
@@ -131,6 +167,13 @@ struct AuthService {
     static func mapSignUpError(_ error: Error) -> SignUpError {
         let message = error.localizedDescription
 
+        // From the availability pre-check, which speaks PostgREST rather than
+        // GoTrue. PostgrestError is not a LocalizedError, so its
+        // localizedDescription is Foundation boilerplate; use the server's own.
+        if let postgrestError = error as? PostgrestError {
+            return .other(postgrestError.message)
+        }
+
         guard let authError = error as? AuthError else {
             return .other(message)
         }
@@ -147,16 +190,22 @@ struct AuthService {
         //      "message": "duplicate key value violates unique constraint
         //                  \"profiles_username_key\""}
         //
-        // Match any of the three. The sanitized sentence is the one that
-        // actually reaches the app today; the SQLSTATE and the constraint name
-        // are standard Postgres and our own migration respectively, and cover
-        // the versionless shape. username is the only unique constraint this
-        // insert can violate.
-        let lowercased = message.lowercased()
+        // The raw form names the constraint and is unambiguous. The sanitised
+        // form is not: GoTrue uses that one sentence for *any* failure inside
+        // the sign-up transaction — a rejected CHECK, a broken trigger, an
+        // outage — and mapping it to "username taken" turned every one of
+        // those into a report of a user mistake. With the format validated and
+        // availability checked before the request, the realistic causes left
+        // are losing a race for the username and a genuine server-side
+        // failure; `.accountCreationFailed` is worded to cover both.
         if authError.errorCode == Self.postgresUniqueViolation
-            || message.contains("profiles_username_key")
-            || lowercased.contains("database error saving new user") {
+            || message.contains("profiles_username_key") {
             return .usernameTaken
+        }
+
+        let lowercased = message.lowercased()
+        if lowercased.contains("database error saving new user") {
+            return .accountCreationFailed
         }
 
         switch authError.errorCode {

@@ -153,6 +153,16 @@ sending anything: a CHECK failure inside the trigger only reaches the client as
 GoTrue's sanitised "Database error saving new user". Captions are capped at
 2,200 characters the same way, checked client-side before the image is uploaded.
 
+Before creating the auth user, sign-up also asks `username_available(text)`
+whether the name is still free. The person asking has no session yet and
+`profiles` is readable only by `authenticated`, so the function is `security
+definer`, callable by `anon`, and returns exactly one bit — the one thing about
+the table that sign-up reveals anyway. The answer is advisory: two people can be
+told "free" at once and one then loses the race inside the trigger, which is why
+the sanitised database error is now reported as a failed creation whose username
+*may* have been taken, rather than asserted as taken — that assertion used to
+turn every server-side failure into a report of a user mistake.
+
 RLS is enabled on both tables. Reads are open to any authenticated user; inserts
 and updates are restricted to the caller's own rows. There are no delete policies,
 so deletes are denied outright. **These read policies are dev-only** — Candid is
