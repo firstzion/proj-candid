@@ -53,8 +53,21 @@ final class SessionStore: ObservableObject {
 
             for await (_, session) in client.auth.authStateChanges {
                 if Task.isCancelled { return }
-                self?.state = session.map { .signedIn(email: $0.user.email) } ?? .signedOut
+                self?.update(from: session)
             }
+        }
+    }
+
+    /// Publishes only on a real change. `@Published` fires on every
+    /// assignment, so without the check each hourly `.tokenRefreshed`
+    /// re-published an identical state and re-evaluated `RootView.body` for
+    /// nothing. Every event maps the same way: a session means signed in —
+    /// even an expired one, which the SDK is refreshing — and nil means
+    /// signed out.
+    private func update(from session: Session?) {
+        let newState: State = session.map { .signedIn(email: $0.user.email) } ?? .signedOut
+        if newState != state {
+            state = newState
         }
     }
 
