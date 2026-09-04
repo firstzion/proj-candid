@@ -11,6 +11,10 @@ struct PostView: View {
     @State private var message: Message?
     @State private var isShowingCamera = false
 
+    /// The in-flight load for the current `pickerItem`, so picking again
+    /// cancels it rather than racing it — see `loadSelectedImage`.
+    @State private var imageLoadTask: Task<Void, Never>?
+
     private enum Message {
         case posted
         case failed(String)
@@ -81,8 +85,14 @@ struct PostView: View {
         // Cancelling the picker leaves the selection untouched, so the previous
         // photo simply stays.
         .onChange(of: pickerItem) { _, newItem in
-            guard let newItem else { return }
-            Task { await loadSelectedImage(newItem) }
+            imageLoadTask?.cancel()
+            guard let newItem else {
+                // Cleared programmatically, after a post. Any load still in
+                // flight was just cancelled and must not leave the spinner up.
+                isLoadingImage = false
+                return
+            }
+            imageLoadTask = Task { await loadSelectedImage(newItem) }
         }
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { captured in
@@ -93,26 +103,37 @@ struct PostView: View {
         }
     }
 
+    /// Loads the picked photo. Picking again while a load is in flight cancels
+    /// the earlier task, and both paths below re-check that `item` is still
+    /// the selection before touching any state. Without that, two loads raced:
+    /// whichever finished last set the preview — sometimes the *older* photo —
+    /// and the first to finish took the spinner down while the other was still
+    /// running.
     private func loadSelectedImage(_ item: PhotosPickerItem) async {
         isLoadingImage = true
         message = nil
 
+        let data: Data?
         do {
-            guard
-                let data = try await item.loadTransferable(type: Data.self),
-                let image = UIImage(data: data)
-            else {
-                // Keep whatever was already chosen rather than blanking the
-                // preview because one load failed.
-                message = .failed("That photo couldn't be loaded. Try another one.")
-                isLoadingImage = false
-                return
-            }
-            selectedImage = image
+            data = try await item.loadTransferable(type: Data.self)
         } catch {
+            // Superseded by a newer pick, which now owns the spinner and the
+            // message; a cancelled load lands here too.
+            guard pickerItem == item else { return }
             message = .failed(error.localizedDescription)
+            isLoadingImage = false
+            return
         }
 
+        guard pickerItem == item else { return }
+
+        if let data, let image = UIImage(data: data) {
+            selectedImage = image
+        } else {
+            // Keep whatever was already chosen rather than blanking the
+            // preview because one load failed.
+            message = .failed("That photo couldn't be loaded. Try another one.")
+        }
         isLoadingImage = false
     }
 
