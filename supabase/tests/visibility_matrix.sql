@@ -21,9 +21,11 @@
 --
 -- Case numbers follow SOL-30's test pass, plus SOL-28's "unfollowing one side
 -- removes the pair" (10), the profile and re-follow rules from SOL-31
--- (11, 12), the feed's own query (13), and follower-list privacy from SOL-66
--- (14-16): an edge is readable at either end or by a mutual of either end,
--- and the counts are public through follow_counts().
+-- (11, 12), the feed's own query (13), follower-list privacy from SOL-66
+-- (14-16: an edge is readable at either end or by a mutual of either end,
+-- and the counts are public through follow_counts()), and deleting a post
+-- from SOL-38 (17: only the author, and the object only once the row is
+-- gone).
 
 begin;
 
@@ -237,6 +239,34 @@ begin
     assert n = 0, format('case 10: alice must no longer see bob''s mutuals post, sees %s', n);
     select count(*) into n from public.posts where user_id = bob and visibility = 'followers';
     assert n = 2, format('case 10: alice should still see bob''s 2 followers posts, sees %s', n);
+
+    -- 17: deleting a post (SOL-38). Only the author's own rows match the
+    -- delete policy — anyone else's delete affects nothing, with no error —
+    -- and the storage guard (20260904160000) refuses the object for as long
+    -- as a row references it, which is what forces "row first, then object".
+    -- The object row from case 8 stands in for alice's mutuals image. The
+    -- hosted project's storage.protect_delete() trigger refuses any direct
+    -- SQL delete on storage tables unless this setting is on — the Storage
+    -- API sets it for its own deletes — so it is set here, for this
+    -- transaction only, to let the *policy* be the thing under test.
+    perform pg_temp.act_as_owner();
+    perform set_config('storage.allow_delete_query', 'true', true);
+    perform pg_temp.act_as(bob);
+    delete from public.posts where user_id = alice and visibility = 'mutuals';
+    get diagnostics n = row_count;
+    assert n = 0, format('case 17: bob must not delete alice''s post, deleted %s', n);
+    perform pg_temp.act_as(alice);
+    delete from storage.objects where name = alice_mutuals_path;
+    get diagnostics n = row_count;
+    assert n = 0, format('case 17: the object must stay while its post exists, but %s row(s) went', n);
+    delete from public.posts where user_id = alice and visibility = 'mutuals';
+    get diagnostics n = row_count;
+    assert n = 1, format('case 17: alice should delete her own post, deleted %s', n);
+    delete from storage.objects where name = alice_mutuals_path;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 17: with the row gone alice should delete the object, deleted %s', n);
+    select count(*) into n from public.posts where user_id = alice;
+    assert n = 2, format('case 17: alice should have 2 posts left, has %s', n);
 
     -- Exposure: the rule is callable from policies, and from nowhere the API
     -- reaches.

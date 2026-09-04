@@ -145,3 +145,134 @@ struct ImageDownsamplingTests {
         #expect(ImageDownsampler.image(from: Data("not an image".utf8), maxPixelSize: 1600) == nil)
     }
 }
+
+/// What leaves the device carries no location and no camera metadata
+/// (SOL-44). The pipeline decodes to a bounded bitmap, redraws it and
+/// re-encodes, so there is no EXIF left to carry — but that was a belief
+/// until this test, and the GPS half is the highest-value privacy item in
+/// Milestone 8: a photo posted straight from the camera roll can otherwise
+/// carry the exact coordinates of a home.
+@Suite("Upload metadata")
+struct UploadMetadataTests {
+    @Test("a GPS-tagged photo comes out of the pipeline with no GPS and no camera EXIF")
+    func metadataIsStripped() throws {
+        let tagged = try Self.taggedJPEG(width: 2400, height: 1800)
+
+        // The fixture really carries what the test claims to strip;
+        // otherwise a passing test would prove nothing.
+        let before = try Self.properties(of: tagged)
+        let gpsBefore = try #require(before[kCGImagePropertyGPSDictionary] as? [CFString: Any])
+        #expect(gpsBefore[kCGImagePropertyGPSLatitude] != nil)
+        let exifBefore = try #require(before[kCGImagePropertyExifDictionary] as? [CFString: Any])
+        #expect(exifBefore[kCGImagePropertyExifDateTimeOriginal] != nil)
+        let tiffBefore = try #require(before[kCGImagePropertyTIFFDictionary] as? [CFString: Any])
+        #expect(tiffBefore[kCGImagePropertyTIFFModel] != nil)
+
+        // The pipeline exactly as posting runs it: decode at the cap, then
+        // redraw and re-encode for upload.
+        let decoded = try #require(ImageDownsampler.image(from: tagged, maxPixelSize: StorageService.maxDimension))
+        let uploaded = try #require(StorageService.jpegData(for: decoded))
+        let after = try Self.properties(of: uploaded)
+
+        // The whole point.
+        #expect(after[kCGImagePropertyGPSDictionary] == nil)
+
+        // And nothing about the camera, the lens or the moment either.
+        let exif = after[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
+        for key in Self.identifyingExifKeys {
+            #expect(exif[key] == nil, "\(key) survived the pipeline")
+        }
+        let tiff = after[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+        for key in Self.identifyingTIFFKeys {
+            #expect(tiff[key] == nil, "\(key) survived the pipeline")
+        }
+
+        // What remains describes the pixels, not the person or the place:
+        // the dimensions and an upright orientation.
+        #expect(after[kCGImagePropertyPixelWidth] as? Int == 1600)
+        #expect((tiff[kCGImagePropertyTIFFOrientation] as? Int ?? 1) == 1)
+    }
+
+    /// The EXIF tags a phone writes that say something about the person:
+    /// when, with what, and (for the maker note) potentially anything.
+    private static var identifyingExifKeys: [CFString] {
+        [
+            kCGImagePropertyExifDateTimeOriginal,
+            kCGImagePropertyExifDateTimeDigitized,
+            kCGImagePropertyExifLensMake,
+            kCGImagePropertyExifLensModel,
+            kCGImagePropertyExifLensSerialNumber,
+            kCGImagePropertyExifBodySerialNumber,
+            kCGImagePropertyExifCameraOwnerName,
+            kCGImagePropertyExifUserComment,
+            kCGImagePropertyExifMakerNote,
+            kCGImagePropertyExifSubjectLocation,
+            kCGImagePropertyExifFNumber,
+            kCGImagePropertyExifExposureTime,
+            kCGImagePropertyExifISOSpeedRatings,
+            kCGImagePropertyExifFocalLength,
+        ]
+    }
+
+    private static var identifyingTIFFKeys: [CFString] {
+        [
+            kCGImagePropertyTIFFMake,
+            kCGImagePropertyTIFFModel,
+            kCGImagePropertyTIFFSoftware,
+            kCGImagePropertyTIFFDateTime,
+            kCGImagePropertyTIFFArtist,
+            kCGImagePropertyTIFFCopyright,
+            kCGImagePropertyTIFFImageDescription,
+        ]
+    }
+
+    /// A JPEG tagged the way a phone tags a photo: where it was taken, when,
+    /// and with what.
+    private static func taggedJPEG(width: CGFloat, height: CGFloat) throws -> Data {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let rendered = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
+            .image { context in
+                UIColor.systemOrange.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            }
+        let cgImage = try #require(rendered.cgImage)
+
+        let gps: [CFString: Any] = [
+            kCGImagePropertyGPSLatitude: 37.3349,
+            kCGImagePropertyGPSLatitudeRef: "N",
+            kCGImagePropertyGPSLongitude: 122.0090,
+            kCGImagePropertyGPSLongitudeRef: "W",
+        ]
+        let exif: [CFString: Any] = [
+            kCGImagePropertyExifDateTimeOriginal: "2026:09:04 14:04:30",
+            kCGImagePropertyExifLensModel: "iPhone 17 Pro back triple camera 6.765mm f/1.78",
+            kCGImagePropertyExifFNumber: 1.78,
+        ]
+        let tiff: [CFString: Any] = [
+            kCGImagePropertyTIFFMake: "Apple",
+            kCGImagePropertyTIFFModel: "iPhone 17 Pro",
+            kCGImagePropertyTIFFSoftware: "26.0",
+        ]
+        let properties: [CFString: Any] = [
+            kCGImagePropertyGPSDictionary: gps,
+            kCGImagePropertyExifDictionary: exif,
+            kCGImagePropertyTIFFDictionary: tiff,
+        ]
+
+        let data = NSMutableData()
+        let destination = try #require(
+            CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil)
+        )
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    /// Everything ImageIO can read back about the encoded file, the way a
+    /// dashboard inspection of an uploaded object would see it.
+    private static func properties(of data: Data) throws -> [CFString: Any] {
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        return try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+    }
+}

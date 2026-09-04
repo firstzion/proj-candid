@@ -10,6 +10,10 @@ import UIKit
 /// it: a post whose tier silently fell back to the default would reach the
 /// wrong audience, and nothing else would ever notice.
 ///
+/// `deletePost` is pinned the other way round: row first, then object, the
+/// order the storage delete policy forces — and by `id` alone, since RLS
+/// scopes the delete to the author.
+///
 /// `.serialized`: `StubURLProtocol`'s state is process-global.
 @Suite(.serialized)
 struct PostServiceRequestTests {
@@ -77,9 +81,103 @@ struct PostServiceRequestTests {
         #expect(row.caption == nil)
     }
 
+    /// Row first, then object: the storage policy refuses an object a row
+    /// still references, so the other order fails loudly. And by `id` alone —
+    /// the `posts` delete policy scopes the statement to the author's own
+    /// rows, so the client sends no `user_id` filter.
+    @Test("deletePost removes the row by id alone, then the object")
+    func deleteRowThenObject() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler(Self.deleteHappyPath)
+
+        let postID = UUID()
+        let imagePath = "\(Self.me.uuidString.lowercased())/\(UUID().uuidString.lowercased()).jpg"
+        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
+        try await service.deletePost(id: postID, imagePath: imagePath)
+
+        let requests = StubURLProtocol.requests
+        #expect(requests.count == 2)
+
+        let row = try #require(requests.first)
+        #expect(row.httpMethod == "DELETE")
+        #expect(row.url?.path == "/rest/v1/posts")
+        let query = row.queryParameters
+        #expect(query["id"] == "eq.\(postID.uuidString)")
+        #expect(query["user_id"] == nil)
+
+        let object = try #require(requests.last)
+        #expect(object.httpMethod == "DELETE")
+        #expect(object.url?.path == Self.removePath)
+        struct RemoveBody: Decodable { let prefixes: [String] }
+        let body = try JSONDecoder().decode(RemoveBody.self, from: try #require(object.drainedBody))
+        #expect(body.prefixes == [imagePath])
+    }
+
+    /// The post is out of every feed the moment the row is; a leftover object
+    /// is readable by its owner alone and costs storage, not privacy. So a
+    /// failed object delete is logged, not reported as a failed delete.
+    @Test("a failed object delete after the row is gone is not surfaced")
+    func objectDeleteFailureIsNotAnError() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { request in
+            if request.url?.path == "/rest/v1/posts" {
+                return .init(statusCode: 204, body: Data())
+            }
+            return .init(
+                statusCode: 400,
+                body: Data(#"{"statusCode":"400","error":"Bad Request","message":"Object not found"}"#.utf8)
+            )
+        }
+
+        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
+        try await service.deletePost(id: UUID(), imagePath: Self.ownImagePath())
+        #expect(StubURLProtocol.requests.count == 2)
+    }
+
+    /// A row that could not be deleted is a live post, and its object must
+    /// stay exactly where it is.
+    @Test("a refused row delete throws and never touches the object")
+    func rowDeleteFailureStopsThere() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in
+            .init(statusCode: 401, body: Data(#"{"code":"42501","message":"permission denied for table posts"}"#.utf8))
+        }
+
+        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
+        await #expect(throws: PostError.self) {
+            try await service.deletePost(id: UUID(), imagePath: Self.ownImagePath())
+        }
+        #expect(StubURLProtocol.requests.count == 1)
+        #expect(StubURLProtocol.requests.first?.url?.path == "/rest/v1/posts")
+    }
+
     // MARK: - Fixtures
 
     private static let uploadPrefix = "/storage/v1/object/post-images/"
+
+    /// Storage's bulk remove endpoint: `DELETE object/<bucket>` with the
+    /// paths in the body.
+    private static let removePath = "/storage/v1/object/post-images"
+
+    private static func ownImagePath() -> String {
+        "\(me.uuidString.lowercased())/\(UUID().uuidString.lowercased()).jpg"
+    }
+
+    /// Answers the row delete with PostgREST's empty 204 and the object
+    /// remove with Storage's list of removed objects.
+    private static func deleteHappyPath(_ request: URLRequest) -> StubURLProtocol.Response {
+        switch request.url?.path {
+        case "/rest/v1/posts":
+            return .init(statusCode: 204, body: Data())
+        case removePath:
+            return .init(body: Data("[]".utf8))
+        default:
+            return .init(statusCode: 404, body: Data())
+        }
+    }
 
     /// Answers the upload with Storage's real response shape (`Key` and `Id`)
     /// and the insert with an empty 201, the way PostgREST does when no

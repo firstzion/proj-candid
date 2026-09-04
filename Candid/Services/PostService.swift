@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Supabase
 import UIKit
 
@@ -96,6 +97,41 @@ struct PostService {
         // without a download. After the insert, so a failed post leaves
         // nothing behind here either.
         ImageCache.shared.store(image, for: imagePath)
+    }
+
+    /// Deletes the post: the row first, then its image.
+    ///
+    /// The order is forced by the storage delete policy, which refuses an
+    /// object a `posts` row still references — so "object first" would fail
+    /// loudly rather than leave a live post with a broken image. The row is
+    /// deleted by `id` alone: the `posts` delete policy scopes the statement
+    /// to the caller's own rows, so no `user_id` filter is needed and a
+    /// wrong one here could never remove someone else's. A row that is
+    /// already gone matches nothing, which is not an error.
+    ///
+    /// A failed image delete after a successful row delete is logged, not
+    /// thrown: the post is already out of every feed, and with no row the
+    /// object is readable only through its owner's own folder clause — a
+    /// storage cost, not a privacy one. Reporting it as a failed delete would
+    /// tell the person their post is still there when it isn't. Account
+    /// deletion makes the same call.
+    func deletePost(id: UUID, imagePath: String) async throws {
+        do {
+            try await client
+                .from("posts")
+                .delete()
+                .eq("id", value: id)
+                .execute()
+        } catch {
+            throw Self.mapPostError(error)
+        }
+
+        do {
+            try await StorageService(client: client).deletePostImage(at: imagePath)
+        } catch {
+            Logger(subsystem: "com.firstzion.candid", category: "PostService")
+                .error("Post \(id.uuidString, privacy: .public) is deleted but its image \(imagePath, privacy: .public) could not be removed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Blank and whitespace-only captions are stored as SQL NULL rather than an

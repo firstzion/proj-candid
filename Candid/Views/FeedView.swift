@@ -4,6 +4,7 @@ struct FeedView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.services) private var services
     @Environment(FeedInvalidation.self) private var feedInvalidation
+    @EnvironmentObject private var sessionStore: SessionStore
 
     @State private var posts: [FeedPost] = []
     @State private var phase: Phase = .loading
@@ -31,6 +32,13 @@ struct FeedView: View {
     /// from inside the app — though only someone whose post you can already
     /// see, which is why the Profile tab also has a lookup by name.
     @State private var selectedProfile: Profile?
+
+    /// The post whose long-press menu chose Delete, held while the
+    /// confirmation is up; and the failure message if the server refused.
+    @State private var postToDelete: FeedPost?
+    @State private var isConfirmingDelete = false
+    @State private var deleteError: String?
+    @State private var isShowingDeleteError = false
 
     private enum Phase {
         case loading
@@ -62,14 +70,12 @@ struct FeedView: View {
                 case .loaded:
                     List {
                         ForEach(posts) { post in
-                            FeedPostRow(post: post) {
-                                selectedProfile = Profile(id: post.authorID, username: post.username)
-                            }
-                            .onAppear {
-                                if post.id == posts.last?.id {
-                                    Task { await loadMore() }
+                            feedRow(for: post)
+                                .onAppear {
+                                    if post.id == posts.last?.id {
+                                        Task { await loadMore() }
+                                    }
                                 }
-                            }
                         }
 
                         if isLoadingMore {
@@ -105,6 +111,23 @@ struct FeedView: View {
             .navigationTitle("Feed")
             .navigationDestination(item: $selectedProfile) { profile in
                 UserProfileView(profile: profile)
+            }
+            .confirmationDialog(
+                "Delete this post?",
+                isPresented: $isConfirmingDelete,
+                titleVisibility: .visible,
+                presenting: postToDelete
+            ) { post in
+                Button("Delete Post", role: .destructive) {
+                    Task { await delete(post) }
+                }
+            } message: { _ in
+                Text("The photo is removed for everyone who could see it. This can't be undone.")
+            }
+            .alert("Couldn't Delete Post", isPresented: $isShowingDeleteError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteError ?? "")
             }
             .task {
                 // Runs every time the tab is shown; only fetch when there is
@@ -193,6 +216,49 @@ struct FeedView: View {
 
         append(page.posts)
         reachedEnd = !page.hasMore
+    }
+
+    /// One row, plus the long-press menu its author gets. Only your own
+    /// posts have one for now — Delete (SOL-38); Report on other people's
+    /// posts joins it with SOL-42. Nothing here decides who may delete: the
+    /// `posts` delete policy does, and the menu simply isn't offered where
+    /// the request would match no rows.
+    @ViewBuilder
+    private func feedRow(for post: FeedPost) -> some View {
+        let row = FeedPostRow(post: post) {
+            selectedProfile = Profile(id: post.authorID, username: post.username)
+        }
+        if post.authorID == sessionStore.currentUserID {
+            row.contextMenu {
+                Button(role: .destructive) {
+                    postToDelete = post
+                    isConfirmingDelete = true
+                } label: {
+                    Label("Delete Post…", systemImage: "trash")
+                }
+            }
+        } else {
+            row
+        }
+    }
+
+    /// Removes the post from the list at once, then asks the server. On
+    /// failure the row comes back where it was, with a message. On success
+    /// the feed is marked stale as well, so the next refresh — and, once it
+    /// exists, the profile grid — comes from the server rather than from a
+    /// local edit. Other viewers lose the post at their next refresh, the
+    /// same window every graph change already has.
+    private func delete(_ post: FeedPost) async {
+        let index = posts.firstIndex { $0.id == post.id }
+        posts.removeAll { $0.id == post.id }
+        do {
+            try await services!.post.deletePost(id: post.id, imagePath: post.imagePath)
+            feedInvalidation.markStale()
+        } catch {
+            posts.insert(post, at: min(index ?? posts.count, posts.count))
+            deleteError = error.localizedDescription
+            isShowingDeleteError = true
+        }
     }
 
     /// Appends only posts not already on screen. Keyset pagination should

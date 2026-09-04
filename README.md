@@ -24,7 +24,10 @@ people from their profile — reached by tapping a username in the feed or
 looking one up on the Profile tab. What's left of Milestone 7 is the hands-on
 smoke test. Milestone 8 has started with its privacy fix: follower and
 following counts are public, but the lists behind them are readable only by
-the people at either end of an edge and their mutuals (SOL-66).
+the people at either end of an edge and their mutuals (SOL-66). You can
+delete your own posts from the feed — long-press, confirm, and the row and its
+image are both gone (SOL-38) — and the upload pipeline is now proven rather
+than assumed to strip EXIF, location included (SOL-44).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -115,9 +118,12 @@ image update can't break the build by renaming or dropping one.
 
 Unit tests live in `CandidTests/` and use Swift Testing. Most cover pure logic
 most likely to rot quietly: the error-mapping functions, which translate opaque
-Supabase errors into wording a person can act on; `UsernameRules`; and the
-image downscaling and downsampling arithmetic. The error mappers and the
-downscaling arithmetic have both already regressed once.
+Supabase errors into wording a person can act on; `UsernameRules`; the
+image downscaling and downsampling arithmetic; and, since SOL-44, that the
+upload pipeline strips metadata — a JPEG tagged with GPS coordinates, a
+capture time and a camera model goes in, and what comes out carries none of
+them. The error mappers and the downscaling arithmetic have both already
+regressed once.
 
 `FeedServiceDecodingTests` goes further and exercises `FeedService.fetchPosts`
 itself against canned PostgREST and Storage responses, stubbed at the
@@ -132,8 +138,10 @@ each method builds — table, HTTP method, filters, body — because a wrong fil
 there is a silent bug (unfollowing nobody, or everybody) that only a live
 project would otherwise reveal. The signed-in user's id is injected into the
 service under test, since a live session is the one thing the stub cannot
-stand in for. `ProfileServiceRequestTests` pins the exact-username lookup the
-same way. All of them build their client with `TestSupabaseClient` in
+stand in for. `PostServiceRequestTests` pins the upload-then-row order of a
+new post and, for delete, the row-then-object order and the by-`id`-only
+filter; `ProfileServiceRequestTests` pins the exact-username lookup the same
+way. All of them build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
 The authorization rule itself is tested in SQL, not Swift.
@@ -357,11 +365,14 @@ would have counted only the rows they may see.
 `blocks` is readable, insertable and deletable only by the blocker, with no
 policy at all for the blocked side. On `profiles`, inserts and updates are restricted to the caller's own rows; on
 `posts`, inserts are, and there is no update policy at all, since posts are
-immutable (see visibility above). Neither has a delete policy, so a client can
-never delete a row directly — but `delete_own_account()` deletes the caller's own `auth.users`
-row, cascading to their `profiles` row, every `posts` row they own and every
-`follows` edge in either direction; see Account deletion below. Deleting a
-single post without deleting the whole account isn't possible yet. On
+immutable (see visibility above). `posts` has a delete policy scoped to the
+author's own rows (SOL-38) — the first delete path in the schema, and the
+escape hatch immutable visibility promised; another account's delete matches
+no rows. `profiles` has no delete policy, so a client can never delete a
+profile row directly — but `delete_own_account()` deletes the caller's own
+`auth.users` row, cascading to their `profiles` row, every `posts` row they
+own and every `follows` edge in either direction; see Account deletion below.
+On
 `follows`, a user may insert and delete only edges where they are the
 follower — you can unfollow someone, you cannot remove one of your followers —
 the insert is refused across a block in either direction, and there is no
@@ -413,10 +424,21 @@ write into another user's folder. A delete policy is scoped the same way, and
 further requires the object to be **unreferenced** — no `posts` row may still
 point at it, checked via a `security definer` `image_is_referenced()` helper
 that stays exact now that reads are narrowed to the follow graph. The client uses it
-to take back an upload whose post row failed to be written, and account
-deletion uses it too — see below. Deleting a single post isn't possible yet;
-when it lands, it needs the same "row first, then object" ordering account
-deletion already uses. There is no update policy — posts are immutable, and an
+to take back an upload whose post row failed to be written, to remove a
+deleted post's image (SOL-38), and in account deletion — see below. Deleting
+a post is "row first, then object" for the same reason account deletion is:
+the guard refuses the object while a row references it, and the matrix checks
+that order from the author's seat. If the object delete then fails, the post
+is already out of every feed and the leftover is readable only through its
+owner's folder clause — a storage cost, not a privacy one — so
+`PostService.deletePost` logs it rather than reporting a failure for a post
+that is, in every way that matters, gone. Supabase's storage schema also
+carries a `protect_delete` trigger that refuses any *direct SQL* delete on
+`storage.objects` unless the transaction has set `storage.allow_delete_query`
+— the Storage API sets it for its own deletes, the matrix sets it for its
+rolled-back transaction, and a dashboard query that forgets it fails with
+"Direct deletion from storage tables is not allowed" rather than deleting
+anything. There is no update policy — posts are immutable, and an
 overwrite of a referenced object would silently change a post's photo.
 
 Reads follow the same rule as the feed. The `storage.objects` select policy
@@ -452,7 +474,14 @@ Uploads are downscaled to a 1600px longest edge and encoded as JPEG at 80%.
 Photos are decoded straight to that size when picked (`ImageDownsampler`, via
 ImageIO's thumbnailing), so the full-size bitmap — around 200 MB for a
 48-megapixel HEIC — is never built; camera captures are downscaled before they
-are held. On the read side the feed keeps decoded images in `ImageCache`, keyed
+are held. What is uploaded is a fresh bitmap redrawn from those pixels, so it
+carries none of the original's EXIF — no GPS coordinates, no camera or lens
+details, no capture time; the only metadata written is the pixel dimensions
+and an upright orientation. `ImageProcessingTests` proves that with a
+GPS-tagged fixture rather than assuming it (SOL-44). The original in the photo
+library is never touched: `PhotosPicker` and the camera hand over data, and
+only the copy that is uploaded is transformed. On the read side the feed keeps
+decoded images in `ImageCache`, keyed
 by storage path rather than URL: a signed URL is different every time it is
 minted, which defeats `AsyncImage` and `URLCache` and had every refresh
 re-downloading every image. A freshly uploaded photo is seeded into the cache so
