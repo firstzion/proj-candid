@@ -208,9 +208,25 @@ the poster's own post appears without a download.
 ### Auth configuration
 
 Hosted auth settings live in `supabase/config.toml` under `[auth]` and are applied
-with `supabase config push`. Email confirmation is disabled
-(`[auth.email] enable_confirmations = false`) so accounts are usable immediately;
-email confirmation is out of scope for the MVP.
+with `supabase config push`. Email confirmation is required
+(`[auth.email] enable_confirmations = true`) — `AuthService.signUp` reports
+whether a session came back, and `SignUpView` shows a "confirm your email"
+notice when it didn't. `minimum_password_length` is 10, with no composition
+rules (NIST SP 800-63B favours length over forced character classes).
+Confirmation, password-reset, and magic-link emails link to
+`candid://auth-callback`, a custom URL scheme registered in
+`Config/Info.plist` (`CFBundleURLTypes`) and handled by `CandidApp`'s
+`onOpenURL`, which hands the callback URL to `client.auth.session(from:)`.
+
+Two things this repo does *not* configure, since neither is a `config.toml`
+key:
+
+* **Leaked-password protection** (Dashboard → Authentication → Providers →
+  Email → "Prevent use of leaked passwords") — turn on by hand if the plan
+  allows it.
+* **Custom SMTP** (`[auth.email.smtp]`) — the built-in mailer is rate-limited
+  (2 emails/hour) and fine for testing, not for real signup volume. Needs a
+  provider account before launch.
 
 > **`supabase config push` pushes the whole `[auth]` block, not just what you
 > edited, and it applies immediately with no confirmation prompt.** Anything in

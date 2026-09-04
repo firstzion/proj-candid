@@ -33,7 +33,9 @@ struct SignUpView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             } footer: {
-                Text("Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores.")
+                // "10" mirrors minimum_password_length in supabase/config.toml,
+                // not a client-enforced rule — keep the two in sync by hand.
+                Text("Passwords must be at least 10 characters. Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores.")
             }
 
             Section {

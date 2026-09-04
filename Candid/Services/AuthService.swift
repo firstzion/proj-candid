@@ -17,6 +17,13 @@ enum SignUpError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emailAlreadyRegistered:
+            // Deliberate email enumeration, unlike the log-in path below.
+            // Decision (SOL-53): accepted for now — most consumer apps make
+            // this trade for the better sign-up UX, and severity is low for a
+            // friends-only app. Once email confirmation is enabled, GoTrue
+            // itself returns a fake success for a duplicate address instead
+            // of an error, so this case fires only while confirmations are
+            // off; revisit removing it entirely at that point.
             return "An account with that email already exists."
         case .usernameTaken:
             return "That username is already taken. Try another one."

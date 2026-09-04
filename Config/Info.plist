@@ -14,5 +14,19 @@
 	<string>$(SUPABASE_API_HOST)</string>
 	<key>SUPABASE_PUBLISHABLE_KEY</key>
 	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
+	<!-- Auth callback deep link. Supabase's site_url (supabase/config.toml)
+	     points confirmation/reset/magic-link emails here; CandidApp's
+	     onOpenURL hands the incoming URL to client.auth.session(from:). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.firstzion.candid.auth-callback</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>candid</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
