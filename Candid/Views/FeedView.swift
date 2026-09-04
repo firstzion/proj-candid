@@ -30,9 +30,10 @@ struct FeedView: View {
         case failed(String)
     }
 
-    /// Deliberately small so pagination is easy to trigger and verify by
-    /// hand, rather than matching `FeedService.defaultLimit`.
-    private static let pageSize = 8
+    /// Posts per page. Each page costs two round trips — the rows, then their
+    /// signed URLs — so this is the service's default rather than the value of
+    /// 8 that had been left in from verifying pagination by hand.
+    private static let pageSize = FeedService.defaultLimit
 
     /// How old the feed may get before it refreshes itself. Half the signed
     /// URL lifetime, so images are swapped for fresh URLs well before the
