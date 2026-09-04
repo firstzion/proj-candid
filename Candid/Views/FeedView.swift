@@ -18,6 +18,12 @@ struct FeedView: View {
     /// it would leave a hole between the fresh head and the old tail.
     @State private var generation = 0
 
+    /// Why the last `loadMore` failed, shown as a retry row under the posts.
+    /// Swallowing it left someone parked at the bottom with no spinner, no
+    /// message and nothing to tap — the last row's `onAppear` does not fire
+    /// again until it scrolls off and back on.
+    @State private var loadMoreError: String?
+
     private enum Phase {
         case loading
         case loaded
@@ -61,6 +67,15 @@ struct FeedView: View {
                                 ProgressView()
                                 Spacer()
                             }
+                        } else if let loadMoreError {
+                            VStack(spacing: 8) {
+                                Text(loadMoreError)
+                                    .foregroundStyle(.red)
+                                    .multilineTextAlignment(.center)
+                                Button("Try Again") { Task { await loadMore() } }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                         }
                     }
                     .listStyle(.plain)
@@ -118,6 +133,7 @@ struct FeedView: View {
             posts = page.posts
             loadedAt = Date()
             reachedEnd = !page.hasMore
+            loadMoreError = nil
             phase = .loaded
         } catch {
             // A failed refresh with posts already on screen just leaves them
@@ -133,13 +149,20 @@ struct FeedView: View {
     private func loadMore() async {
         guard !isLoadingMore, !reachedEnd else { return }
         isLoadingMore = true
+        loadMoreError = nil
         defer { isLoadingMore = false }
 
         let startedIn = generation
-        guard let page = try? await FeedService().fetchPosts(before: posts.last?.cursor, limit: Self.pageSize) else {
-            // A transient failure here just leaves `reachedEnd` false, so
-            // scrolling back to the last row (or pulling to refresh) tries
-            // again rather than the feed being stuck or erroring out wholesale.
+        let page: FeedPage
+        do {
+            page = try await FeedService().fetchPosts(before: posts.last?.cursor, limit: Self.pageSize)
+        } catch {
+            // `reachedEnd` stays false, so the retry row under the posts — or
+            // scrolling the last one off and back on, or pulling to refresh —
+            // tries again, rather than the whole feed erroring out over
+            // content that is fine.
+            guard startedIn == generation else { return }
+            loadMoreError = error.localizedDescription
             return
         }
 
