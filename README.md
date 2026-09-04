@@ -15,8 +15,8 @@ The app root is session-gated: `RootView` shows the Log In screen when signed ou
 and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
 `authStateChanges`. Sessions are persisted and refreshed by the Supabase SDK
 itself — `defaultLocalStorage` is `KeychainLocalStorage` and `autoRefreshToken`
-defaults to true — so there is no custom persistence here. Log Out lives on the
-Profile tab.
+defaults to true — so there is no custom persistence here. The Profile tab shows
+the signed-in user's username from their `profiles` row, plus Log Out.
 
 ## Requirements
 
@@ -46,13 +46,15 @@ xcodebuild -project Candid.xcodeproj -scheme Candid -configuration Debug \
 ```
 Candid.xcodeproj      Xcode project (uses synchronized folders — files on disk are
                       picked up automatically, no need to add them to the target)
+Config/               Build configuration; Secrets.xcconfig here is gitignored
 Candid/
   CandidApp.swift     App entry point
-  Models/             Data types (empty)
-  ViewModels/         View state and logic (empty)
-  Services/           Backend and platform services (empty)
-  Views/              SwiftUI views — RootTabView plus the three tab placeholders
+  Models/             Profile
+  ViewModels/         SessionStore — mirrors the SDK's auth state
+  Services/           SupabaseService, AuthService, ProfileService
+  Views/              RootView (session gate), auth screens, RootTabView and tabs
   Resources/          Asset catalog
+supabase/             CLI config and versioned migrations
 ```
 
 Empty folders are held in git by a `.gitkeep` file. These are excluded from the build
