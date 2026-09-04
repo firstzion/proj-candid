@@ -1,11 +1,8 @@
 import SwiftUI
 
-struct SignUpView: View {
-    @Environment(\.dismiss) private var dismiss
-
+struct LogInView: View {
     @State private var email = ""
     @State private var password = ""
-    @State private var username = ""
     @State private var isSubmitting = false
     @State private var message: Message?
 
@@ -24,12 +21,7 @@ struct SignUpView: View {
                     .autocorrectionDisabled()
 
                 SecureField("Password", text: $password)
-                    .textContentType(.newPassword)
-
-                TextField("Username", text: $username)
-                    .textContentType(.username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                    .textContentType(.password)
             }
 
             Section {
@@ -39,7 +31,7 @@ struct SignUpView: View {
                     if isSubmitting {
                         ProgressView()
                     } else {
-                        Text("Sign Up")
+                        Text("Log In")
                     }
                 }
                 .disabled(!canSubmit)
@@ -57,19 +49,18 @@ struct SignUpView: View {
             }
 
             Section {
-                Button("Already have an account? Log In") {
-                    dismiss()
+                NavigationLink("Don't have an account? Sign Up") {
+                    SignUpView()
                 }
             }
         }
-        .navigationTitle("Sign Up")
+        .navigationTitle("Log In")
     }
 
     private var canSubmit: Bool {
         !isSubmitting
             && !email.trimmingCharacters(in: .whitespaces).isEmpty
             && !password.isEmpty
-            && !username.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private func submit() async {
@@ -77,16 +68,8 @@ struct SignUpView: View {
         message = nil
 
         do {
-            let result = try await AuthService().signUp(
-                email: email,
-                password: password,
-                username: username
-            )
-            message = .success(
-                result.hasActiveSession
-                    ? "Signed up and logged in."
-                    : "Account created, but no session — email confirmation is still enabled on the project."
-            )
+            let result = try await AuthService().signIn(email: email, password: password)
+            message = .success("Logged in as \(result.email ?? "unknown").")
         } catch {
             message = .failure(error.localizedDescription)
         }
@@ -97,6 +80,6 @@ struct SignUpView: View {
 
 #Preview {
     NavigationStack {
-        SignUpView()
+        LogInView()
     }
 }

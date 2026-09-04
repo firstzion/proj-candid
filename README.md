@@ -7,8 +7,14 @@ Tracked in Linear: [Project Candid](https://linear.app/cspurlock/project/project
 
 ## Status
 
-Scaffold only. The app builds and launches to a three-tab shell (Feed, Post, Profile)
-with placeholder views. No backend, no real functionality yet.
+Three-tab shell (Feed, Post, Profile) with placeholder views, wired to a hosted
+Supabase backend. Accounts work: a user can sign up and log in. Feed and Post are
+still placeholders.
+
+Auth screens are reachable from a temporary button on the Profile tab until the
+auth-gated app root lands (SOL-8). Sessions are persisted and refreshed by the
+Supabase SDK itself — `defaultLocalStorage` is `KeychainLocalStorage` and
+`autoRefreshToken` defaults to true, so there is no custom persistence here.
 
 ## Requirements
 
