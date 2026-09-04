@@ -5,7 +5,13 @@ import Foundation
 /// rather than the raw storage path — see `StorageService`, which mints it.
 struct FeedPost: Identifiable, Equatable {
     let id: UUID
-    let imageURL: URL
+
+    /// Nil when the object could not be signed — most likely it no longer
+    /// exists. The post is still shown, with a placeholder, rather than
+    /// dropped: its author and caption are real content, and dropping rows
+    /// made a page look shorter than it was, which the feed read as the end.
+    let imageURL: URL?
+
     let caption: String?
     let createdAt: Date
     let username: String
@@ -15,6 +21,18 @@ struct FeedPost: Identifiable, Equatable {
     /// set from the row's raw `created_at` text, rather than derived from
     /// `createdAt`: see `FeedCursor` for why re-deriving it is unsafe.
     let cursor: FeedCursor
+}
+
+/// One page of the feed, from `FeedService.fetchPosts(before:limit:)`.
+struct FeedPage: Equatable {
+    let posts: [FeedPost]
+
+    /// Whether a page exists after `posts.last`. Decided from the rows the
+    /// query returned — it asks for one more than the page size, and whether
+    /// that extra row came back is the answer — never from `posts.count`, so
+    /// nothing about how a page was assembled can make the feed look finished
+    /// early.
+    let hasMore: Bool
 }
 
 /// A keyset pagination cursor: the `(created_at, id)` of the last post seen.

@@ -115,9 +115,9 @@ struct FeedView: View {
         do {
             let page = try await FeedService().fetchPosts(limit: Self.pageSize)
             generation += 1
-            posts = page
+            posts = page.posts
             loadedAt = Date()
-            reachedEnd = page.count < Self.pageSize
+            reachedEnd = !page.hasMore
             phase = .loaded
         } catch {
             // A failed refresh with posts already on screen just leaves them
@@ -146,10 +146,8 @@ struct FeedView: View {
         // The feed was refreshed underneath this request — see `generation`.
         guard startedIn == generation else { return }
 
-        append(page)
-        if page.count < Self.pageSize {
-            reachedEnd = true
-        }
+        append(page.posts)
+        reachedEnd = !page.hasMore
     }
 
     /// Appends only posts not already on screen. Keyset pagination should
@@ -169,21 +167,25 @@ private struct PostRow: View {
             Text(post.username)
                 .font(.headline)
 
-            AsyncImage(url: post.imageURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                case .failure:
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 200)
-                case .empty:
-                    ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 200)
-                @unknown default:
-                    EmptyView()
+            if let imageURL = post.imageURL {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFit()
+                    case .failure:
+                        missingImage
+                    case .empty:
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    @unknown default:
+                        EmptyView()
+                    }
                 }
+            } else {
+                // The object behind this post could not be signed — see
+                // `FeedPost.imageURL`. Handled here because `AsyncImage` given
+                // a nil URL never leaves `.empty`: a spinner that never stops.
+                missingImage
             }
 
             if let caption = post.caption {
@@ -195,6 +197,13 @@ private struct PostRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
+    }
+
+    private var missingImage: some View {
+        Image(systemName: "photo")
+            .font(.largeTitle)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 200)
     }
 }
 

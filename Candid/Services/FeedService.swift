@@ -19,9 +19,12 @@ struct FeedService {
     /// username and a ready-to-display signed image URL.
     ///
     /// Pass the previous page's last post's `cursor` as `before` to fetch the
-    /// next page; omit it for the first page. An empty `posts` table (or an
-    /// exhausted cursor) returns `[]` rather than throwing.
-    func fetchPosts(before cursor: FeedCursor? = nil, limit: Int = FeedService.defaultLimit) async throws -> [FeedPost] {
+    /// next page; omit it for the first page. The query asks for `limit + 1`
+    /// rows and returns at most `limit`; whether the extra row came back is
+    /// what makes `FeedPage.hasMore` exact rather than a guess from the page
+    /// length. An empty `posts` table (or an exhausted cursor) returns an
+    /// empty page rather than throwing.
+    func fetchPosts(before cursor: FeedCursor? = nil, limit: Int = FeedService.defaultLimit) async throws -> FeedPage {
         let client = try SupabaseService.shared.client()
 
         do {
@@ -41,27 +44,33 @@ struct FeedService {
             let rows: [PostRow] = try await query
                 .order("created_at", ascending: false)
                 .order("id", ascending: false)
-                .limit(limit)
+                .limit(limit + 1)
                 .execute()
                 .value
 
-            guard !rows.isEmpty else { return [] }
+            let hasMore = rows.count > limit
+            let pageRows = rows.prefix(limit)
 
-            let signedURLs = try await StorageService().signedURLs(for: rows.map(\.imagePath))
+            guard !pageRows.isEmpty else { return FeedPage(posts: [], hasMore: false) }
+
+            let signedURLs = try await StorageService().signedURLs(for: pageRows.map(\.imagePath))
 
             // A row whose image didn't come back (e.g. the object went
-            // missing) is dropped rather than failing the whole page.
-            return rows.compactMap { row in
-                guard let imageURL = signedURLs[row.imagePath] else { return nil }
-                return FeedPost(
+            // missing) keeps its place with a nil URL rather than being
+            // dropped. Dropping it made the page shorter than the query said,
+            // and the feed read a short page as the end of the feed — one
+            // missing object hid every older post.
+            let posts = pageRows.map { row in
+                FeedPost(
                     id: row.id,
-                    imageURL: imageURL,
+                    imageURL: signedURLs[row.imagePath],
                     caption: row.caption,
                     createdAt: row.createdAt,
                     username: row.profiles.username,
                     cursor: FeedCursor(createdAt: row.createdAtRaw, id: row.id)
                 )
             }
+            return FeedPage(posts: posts, hasMore: hasMore)
         } catch {
             throw Self.mapFeedError(error)
         }
