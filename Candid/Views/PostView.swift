@@ -7,8 +7,14 @@ struct PostView: View {
     @State private var selectedImage: UIImage?
     @State private var caption = ""
     @State private var isLoadingImage = false
-    @State private var loadError: String?
+    @State private var isPosting = false
+    @State private var message: Message?
     @State private var isShowingCamera = false
+
+    private enum Message {
+        case posted
+        case failed(String)
+    }
 
     var body: some View {
         NavigationStack {
@@ -40,31 +46,40 @@ struct PostView: View {
                         photoLibrary: .shared()
                     )
 
-                    // Only offered where a camera exists — it never does in the
-                    // Simulator, and showing a button that cannot work is worse
-                    // than not showing one.
+                    // Only offered where a camera exists.
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
                         Button("Take Photo") { isShowingCamera = true }
                     }
                 }
+                .disabled(isPosting)
 
                 Section("Caption") {
                     TextField("Optional", text: $caption, axis: .vertical)
                         .lineLimit(1...4)
+                        .disabled(isPosting)
                 }
 
-                FormMessageSection(message: loadError)
-
-                #if DEBUG
-                Section("Debug") {
-                    StorageUploadCheck()
+                Section {
+                    AsyncSubmitButton("Post", isSubmitting: isPosting, isEnabled: selectedImage != nil) {
+                        await post()
+                    }
                 }
-                #endif
+
+                switch message {
+                case .posted:
+                    Section {
+                        Text("Posted.").foregroundStyle(.green)
+                    }
+                case .failed(let text):
+                    FormMessageSection(message: text)
+                case nil:
+                    EmptyView()
+                }
             }
             .navigationTitle("New Post")
         }
-        // Cancelling the picker leaves the selection untouched, so there is
-        // nothing to handle for that case: the previous photo simply stays.
+        // Cancelling the picker leaves the selection untouched, so the previous
+        // photo simply stays.
         .onChange(of: pickerItem) { _, newItem in
             guard let newItem else { return }
             Task { await loadSelectedImage(newItem) }
@@ -72,6 +87,7 @@ struct PostView: View {
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { captured in
                 selectedImage = captured
+                message = nil
             }
             .ignoresSafeArea()
         }
@@ -79,7 +95,7 @@ struct PostView: View {
 
     private func loadSelectedImage(_ item: PhotosPickerItem) async {
         isLoadingImage = true
-        loadError = nil
+        message = nil
 
         do {
             guard
@@ -88,16 +104,41 @@ struct PostView: View {
             else {
                 // Keep whatever was already chosen rather than blanking the
                 // preview because one load failed.
-                loadError = "That photo couldn't be loaded. Try another one."
+                message = .failed("That photo couldn't be loaded. Try another one.")
                 isLoadingImage = false
                 return
             }
             selectedImage = image
         } catch {
-            loadError = error.localizedDescription
+            message = .failed(error.localizedDescription)
         }
 
         isLoadingImage = false
+    }
+
+    private func post() async {
+        guard let image = selectedImage else {
+            message = .failed(PostError.noImageSelected.localizedDescription)
+            return
+        }
+
+        isPosting = true
+        message = nil
+
+        do {
+            try await PostService().createPost(image: image, caption: caption)
+            // Only reset once the row is actually written, so a failure leaves
+            // the photo and caption in place to retry rather than discarding
+            // work the person would have to redo.
+            selectedImage = nil
+            pickerItem = nil
+            caption = ""
+            message = .posted
+        } catch {
+            message = .failed(error.localizedDescription)
+        }
+
+        isPosting = false
     }
 }
 
@@ -144,129 +185,6 @@ private struct CameraPicker: UIViewControllerRepresentable {
         }
     }
 }
-
-#if DEBUG
-import Supabase
-
-/// Debug-only harness from SOL-9, kept until SOL-11 wires the real upload.
-private struct StorageUploadCheck: View {
-    private enum Outcome {
-        case idle
-        case running
-        case uploaded(UploadedImage, byteCount: Int, pixels: CGSize)
-        case rejectedAsExpected(String)
-        case unexpected(String)
-    }
-
-    @State private var outcome: Outcome = .idle
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button("Upload Test Image") {
-                Task { await runUpload() }
-            }
-            .disabled(isRunning)
-
-            Button("Try Upload To Another User's Folder") {
-                Task { await runForbiddenUpload() }
-            }
-            .disabled(isRunning)
-
-            switch outcome {
-            case .idle:
-                EmptyView()
-            case .running:
-                ProgressView()
-            case .uploaded(let uploaded, let byteCount, let pixels):
-                Text("Uploaded \(Int(pixels.width))×\(Int(pixels.height)), \(byteCount / 1024) KB")
-                    .foregroundStyle(.green)
-                Text(uploaded.path).font(.caption2).foregroundStyle(.secondary)
-                AsyncImage(url: uploaded.signedURL) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    ProgressView()
-                }
-                .frame(height: 100)
-            case .rejectedAsExpected(let message):
-                Text("Rejected as expected: \(message)").foregroundStyle(.green)
-            case .unexpected(let message):
-                Text(message).foregroundStyle(.red)
-            }
-        }
-        .font(.footnote)
-    }
-
-    private var isRunning: Bool {
-        if case .running = outcome { return true }
-        return false
-    }
-
-    private func runUpload() async {
-        outcome = .running
-        do {
-            let client = try SupabaseService.shared.client()
-            let userId = try await client.auth.session.user.id
-
-            let image = Self.makeTestImage()
-            let uploaded = try await StorageService().uploadPostImage(image, userId: userId)
-
-            let processed = StorageService.downscaled(image)
-            let bytes = StorageService.jpegData(for: image)?.count ?? 0
-            outcome = .uploaded(
-                uploaded,
-                byteCount: bytes,
-                pixels: CGSize(width: processed.size.width, height: processed.size.height)
-            )
-        } catch {
-            outcome = .unexpected(error.localizedDescription)
-        }
-    }
-
-    private func runForbiddenUpload() async {
-        outcome = .running
-        do {
-            let client = try SupabaseService.shared.client()
-            let path = "\(UUID().uuidString.lowercased())/\(UUID().uuidString.lowercased()).jpg"
-
-            guard let data = StorageService.jpegData(for: Self.makeTestImage()) else {
-                outcome = .unexpected("Could not encode the test image.")
-                return
-            }
-
-            try await client.storage
-                .from(StorageService.bucket)
-                .upload(path, data: data, options: FileOptions(contentType: "image/jpeg"))
-
-            outcome = .unexpected("SECURITY PROBLEM: upload to another user's folder succeeded.")
-        } catch {
-            let mapped = StorageService.mapStorageError(error)
-            if case .notPermitted(let message) = mapped {
-                outcome = .rejectedAsExpected(message)
-            } else {
-                outcome = .unexpected("Rejected, but not as a permission error: \(mapped.localizedDescription)")
-            }
-        }
-    }
-
-    private static func makeTestImage() -> UIImage {
-        let size = CGSize(width: 3000, height: 2000)
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-
-        return UIGraphicsImageRenderer(size: size, format: format).image { context in
-            UIColor.systemIndigo.setFill()
-            context.fill(CGRect(origin: .zero, size: size))
-            UIColor.systemYellow.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: size.width / 2, height: size.height / 2))
-            UIColor.systemTeal.setFill()
-            context.cgContext.fillEllipse(
-                in: CGRect(x: size.width / 4, y: size.height / 4,
-                           width: size.width / 2, height: size.height / 2)
-            )
-        }
-    }
-}
-#endif
 
 #Preview {
     PostView()

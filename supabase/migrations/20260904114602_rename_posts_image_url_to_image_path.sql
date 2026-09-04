@@ -1,0 +1,11 @@
+-- Rename posts.image_url to posts.image_path.
+--
+-- The column was named when the plan was a public bucket holding permanent
+-- URLs. The bucket ended up private, so what actually gets stored is a storage
+-- object path like {user_id}/{uuid}.jpg, and URLs are signed on demand at read
+-- time because they expire. "image_url" now describes something the column
+-- never holds.
+--
+-- Done here, before the first post exists, because a rename is free with zero
+-- rows and gets steadily more annoying afterwards.
+alter table public.posts rename column image_url to image_path;

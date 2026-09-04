@@ -11,9 +11,11 @@ Three-tab shell (Feed, Post, Profile) with placeholder views, wired to a hosted
 Supabase backend. Accounts work: a user can sign up and log in. Feed and Post are
 still placeholders.
 
-The Post tab composes a post: pick from the photo library (or capture with the
-camera on a device that has one), preview it, and add an optional caption.
-Uploading and saving arrive in SOL-11.
+The Post tab creates a post end to end: pick from the photo library (or capture
+with the camera on a device that has one), preview it, add an optional caption,
+and publish. The image is uploaded first and the row written second, so a failure
+never leaves a post pointing at an image that does not exist. Blank captions are
+stored as NULL rather than an empty string.
 
 The app root is session-gated: `RootView` shows the Log In screen when signed out
 and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
@@ -129,7 +131,7 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | Table | Columns |
 |---|---|
 | `profiles` | `id` (PK → `auth.users`), `username` (unique), `created_at` |
-| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_url`, `caption` (nullable), `created_at` |
+| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable), `created_at` |
 
 A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
 taking `username` from the sign-up metadata and falling back to a generated
@@ -150,7 +152,7 @@ write into another user's folder.
 
 Because the bucket is private, reads go through short-lived signed URLs rather
 than permanent public ones. The durable identifier for an image is therefore its
-object **path**, which is what `posts.image_url` stores; `StorageService.signedURL(for:)`
+object **path**, which is what `posts.image_path` stores; `StorageService.signedURL(for:)`
 mints a URL on demand. Public buckets were the simpler option, but a public bucket
 makes every uploaded photo fetchable forever by anyone with the URL, which is hard
 to reconcile with an app built around sharing to friends — and it is a one-way

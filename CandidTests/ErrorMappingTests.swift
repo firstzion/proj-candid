@@ -224,3 +224,47 @@ struct StorageErrorMappingTests {
         #expect(message == "The object exceeded the maximum allowed size")
     }
 }
+
+@Suite("Post error mapping and caption handling")
+struct PostServiceTests {
+    @Test("a blank caption becomes null rather than an empty string")
+    func blankCaptionIsNil() {
+        #expect(PostService.normalizedCaption("") == nil)
+        #expect(PostService.normalizedCaption("   ") == nil)
+        #expect(PostService.normalizedCaption("\n\t ") == nil)
+    }
+
+    @Test("a real caption is trimmed but kept")
+    func realCaptionIsTrimmed() {
+        #expect(PostService.normalizedCaption("  hello  ") == "hello")
+        #expect(PostService.normalizedCaption("hello") == "hello")
+    }
+
+    @Test("a caption of only interior whitespace is preserved verbatim inside")
+    func interiorWhitespaceSurvives() {
+        #expect(PostService.normalizedCaption(" a  b ") == "a  b")
+    }
+
+    @Test("an RLS rejection on insert is reported as a permission problem")
+    func rlsRejection() {
+        let mapped = PostService.mapPostError(
+            PostgrestError(code: "42501", message: "new row violates row-level security policy for table \"posts\"")
+        )
+        guard case .notPermitted = mapped else {
+            Issue.record("expected .notPermitted, got \(mapped)")
+            return
+        }
+    }
+
+    @Test("other PostgREST errors surface the server's message, not boilerplate")
+    func serverMessageSurvives() {
+        let mapped = PostService.mapPostError(
+            PostgrestError(code: "23503", message: "insert or update on table \"posts\" violates foreign key constraint")
+        )
+        guard case .other(let message) = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+        #expect(message.contains("foreign key constraint"))
+    }
+}
