@@ -11,6 +11,10 @@ Three-tab shell (Feed, Post, Profile) with placeholder views, wired to a hosted
 Supabase backend. Accounts work: a user can sign up and log in. Feed and Post are
 still placeholders.
 
+The Post tab composes a post: pick from the photo library (or capture with the
+camera on a device that has one), preview it, and add an optional caption.
+Uploading and saving arrive in SOL-11.
+
 The app root is session-gated: `RootView` shows the Log In screen when signed out
 and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
 `authStateChanges`. Sessions are persisted and refreshed by the Supabase SDK
@@ -41,6 +45,18 @@ xcodebuild -project Candid.xcodeproj -scheme Candid -configuration Debug \
   -destination 'platform=iOS Simulator,name=iPhone 17' build
 ```
 
+## Tests
+
+```bash
+xcodebuild -project Candid.xcodeproj -scheme Candid \
+  -destination 'platform=iOS Simulator,name=iPhone 17' test
+```
+
+Unit tests live in `CandidTests/` and use Swift Testing. They cover the pure
+logic most likely to rot quietly: the error-mapping functions, which translate
+opaque Supabase errors into wording a person can act on, and the image
+downscaling arithmetic. Both have already regressed once.
+
 ## Project layout
 
 ```
@@ -53,7 +69,9 @@ Candid/
   ViewModels/         SessionStore — mirrors the SDK's auth state
   Services/           SupabaseService, AuthService, ProfileService
   Views/              RootView (session gate), auth screens, RootTabView and tabs
+    Components/       Small shared form controls
   Resources/          Asset catalog
+CandidTests/          Unit tests (Swift Testing)
 supabase/             CLI config and versioned migrations
 ```
 

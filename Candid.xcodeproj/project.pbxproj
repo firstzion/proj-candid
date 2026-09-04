@@ -14,10 +14,12 @@
 		CD00000000000000000000A4 /* Candid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Candid.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD00000000000000000000C4 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		CD00000000000000000000C6 /* Secrets.example.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.example.xcconfig; sourceTree = "<group>"; };
+		CD00000000000000000000D3 /* CandidTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CandidTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CD00000000000000000000A9 /* Candid */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Candid; sourceTree = "<group>"; };
+		CD00000000000000000000D2 /* CandidTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = CandidTests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -29,6 +31,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CD00000000000000000000D5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -37,6 +46,7 @@
 			children = (
 				CD00000000000000000000C5 /* Config */,
 				CD00000000000000000000A9 /* Candid */,
+				CD00000000000000000000D2 /* CandidTests */,
 				CD00000000000000000000A3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +64,7 @@
 			isa = PBXGroup;
 			children = (
 				CD00000000000000000000A4 /* Candid.app */,
+				CD00000000000000000000D3 /* CandidTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -84,7 +95,48 @@
 			productReference = CD00000000000000000000A4 /* Candid.app */;
 			productType = "com.apple.product-type.application";
 		};
+		CD00000000000000000000D1 /* CandidTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CD00000000000000000000D7 /* Build configuration list for PBXNativeTarget "CandidTests" */;
+			buildPhases = (
+				CD00000000000000000000D4 /* Sources */,
+				CD00000000000000000000D5 /* Frameworks */,
+				CD00000000000000000000D6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CD00000000000000000000DA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				CD00000000000000000000D2 /* CandidTests */,
+			);
+			name = CandidTests;
+			packageProductDependencies = (
+			);
+			productName = CandidTests;
+			productReference = CD00000000000000000000D3 /* CandidTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		CD00000000000000000000DB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CD00000000000000000000A1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD00000000000000000000A5;
+			remoteInfo = Candid;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		CD00000000000000000000DA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD00000000000000000000A5 /* Candid */;
+			targetProxy = CD00000000000000000000DB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		CD00000000000000000000A1 /* Project object */ = {
@@ -96,6 +148,10 @@
 				TargetAttributes = {
 					CD00000000000000000000A5 = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					CD00000000000000000000D1 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = CD00000000000000000000A5;
 					};
 				};
 			};
@@ -117,6 +173,7 @@
 			projectRoot = "";
 			targets = (
 				CD00000000000000000000A5 /* Candid */,
+				CD00000000000000000000D1 /* CandidTests */,
 			);
 		};
 /* End PBXProject section */
@@ -129,10 +186,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CD00000000000000000000D6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CD00000000000000000000A6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CD00000000000000000000D4 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -257,6 +328,42 @@
 			};
 			name = Release;
 		};
+		CD00000000000000000000D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firstzion.candid.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Candid.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Candid";
+			};
+			name = Debug;
+		};
+		CD00000000000000000000D9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firstzion.candid.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Candid.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Candid";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -274,6 +381,15 @@
 			buildConfigurations = (
 				CD00000000000000000000B5 /* Debug */,
 				CD00000000000000000000B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CD00000000000000000000D7 /* Build configuration list for PBXNativeTarget "CandidTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CD00000000000000000000D8 /* Debug */,
+				CD00000000000000000000D9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

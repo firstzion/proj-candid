@@ -6,6 +6,10 @@
 	     (bundle name, version, scene manifest, and so on) on top, because
 	     GENERATE_INFOPLIST_FILE stays YES. Values are substituted from
 	     Config/Base.xcconfig at build time. -->
+	<!-- Shown when the compose screen opens the camera. Required by iOS; the
+	     app crashes on camera access without it. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Candid uses the camera so you can take a photo to share with your friends.</string>
 	<key>SUPABASE_API_HOST</key>
 	<string>$(SUPABASE_API_HOST)</string>
 	<key>SUPABASE_PUBLISHABLE_KEY</key>

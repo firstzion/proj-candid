@@ -39,16 +39,9 @@ struct SignUpView: View {
             }
 
             Section {
-                Button {
-                    Task { await submit() }
-                } label: {
-                    if isSubmitting {
-                        ProgressView()
-                    } else {
-                        Text("Sign Up")
-                    }
+                AsyncSubmitButton("Sign Up", isSubmitting: isSubmitting, isEnabled: canSubmit) {
+                    await submit()
                 }
-                .disabled(!canSubmit)
             }
 
             if let outcome {
@@ -73,8 +66,7 @@ struct SignUpView: View {
     }
 
     private var canSubmit: Bool {
-        !isSubmitting
-            && !email.trimmingCharacters(in: .whitespaces).isEmpty
+        !email.trimmingCharacters(in: .whitespaces).isEmpty
             && !password.isEmpty
             && !username.trimmingCharacters(in: .whitespaces).isEmpty
     }

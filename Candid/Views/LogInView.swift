@@ -24,23 +24,12 @@ struct LogInView: View {
             }
 
             Section {
-                Button {
-                    Task { await submit() }
-                } label: {
-                    if isSubmitting {
-                        ProgressView()
-                    } else {
-                        Text("Log In")
-                    }
+                AsyncSubmitButton("Log In", isSubmitting: isSubmitting, isEnabled: canSubmit) {
+                    await submit()
                 }
-                .disabled(!canSubmit)
             }
 
-            if let errorMessage {
-                Section {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
-            }
+            FormMessageSection(message: errorMessage)
 
             Section {
                 NavigationLink("Don't have an account? Sign Up") {
@@ -52,9 +41,7 @@ struct LogInView: View {
     }
 
     private var canSubmit: Bool {
-        !isSubmitting
-            && !email.trimmingCharacters(in: .whitespaces).isEmpty
-            && !password.isEmpty
+        !email.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty
     }
 
     private func submit() async {
