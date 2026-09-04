@@ -21,7 +21,9 @@
 --
 -- Case numbers follow SOL-30's test pass, plus SOL-28's "unfollowing one side
 -- removes the pair" (10), the profile and re-follow rules from SOL-31
--- (11, 12) and the feed's own query (13).
+-- (11, 12), the feed's own query (13), and follower-list privacy from SOL-66
+-- (14-16): an edge is readable at either end or by a mutual of either end,
+-- and the counts are public through follow_counts().
 
 begin;
 
@@ -53,8 +55,10 @@ declare
     carol constant uuid := '00000000-0000-0000-0000-000000000003';
     dave  constant uuid := '00000000-0000-0000-0000-000000000004';
     erin  constant uuid := '00000000-0000-0000-0000-000000000005';
+    ivan  constant uuid := '00000000-0000-0000-0000-000000000009';
     judy  constant uuid := '00000000-0000-0000-0000-00000000000a';
     n int;
+    m int;
     msg text;
     alice_mutuals_path text;
 begin
@@ -73,6 +77,10 @@ begin
         'precondition: dave should block erin';
     assert not exists (select 1 from public.follows where follower_id = judy or followee_id = judy),
         'precondition: judy should be unconnected';
+    assert exists (select 1 from public.follows where follower_id = ivan and followee_id = alice),
+        'precondition: ivan should follow alice';
+    select count(*) into n from public.follows where followee_id = alice;
+    assert n = 3, format('precondition: alice should have exactly 3 followers (bob, carol, ivan), has %s', n);
     select image_path into alice_mutuals_path from public.posts where user_id = alice and visibility = 'mutuals';
 
     -- 1, 2: the author sees their own posts at both tiers.
@@ -171,6 +179,52 @@ begin
     select count(*) into n from storage.objects where name = alice_mutuals_path;
     assert n = 1, format('case 8: alice should see her own object, sees %s rows', n);
 
+    -- 14: follower lists are private (SOL-66). An edge is readable at either
+    -- end, or by a mutual of either end, and nowhere else. alice -> bob is on
+    -- alice's following list and bob's followers list; judy is a stranger to
+    -- both and carol only follows alice one-way, so neither may read it.
+    perform pg_temp.act_as(judy);
+    select count(*) into n from public.follows where follower_id = alice and followee_id = bob;
+    assert n = 0, format('case 14: judy (stranger) must not read alice -> bob, reads %s', n);
+    select count(*) into n from public.follows where follower_id = alice or followee_id = alice;
+    assert n = 0, format('case 14: judy must read none of alice''s edges, reads %s', n);
+    perform pg_temp.act_as(carol);
+    select count(*) into n from public.follows where follower_id = alice and followee_id = bob;
+    assert n = 0, format('case 14: carol (one-way) must not read alice -> bob, reads %s', n);
+    -- Her own edge stays hers to read, which is all the follow button needs:
+    -- the relationship query asks for both directions between carol and
+    -- alice and finds exactly the one edge that exists.
+    select count(*) into n from public.follows
+    where (follower_id = carol and followee_id = alice) or (follower_id = alice and followee_id = carol);
+    assert n = 1, format('case 14: carol should read her own edge to alice, reads %s', n);
+    select count(*) into n from public.follows where follower_id = alice or followee_id = alice;
+    assert n = 1, format('case 14: of alice''s edges carol should read only her own, reads %s', n);
+    select count(*) into n from public.mutuals;
+    assert n = 0, format('case 14: carol has no mutuals, so the view should show her no pairs, shows %s', n);
+
+    -- 15: a mutual reads the whole list, including edges other people made.
+    perform pg_temp.act_as(bob);
+    select count(*) into n from public.follows where followee_id = alice;
+    assert n = 3, format('case 15: bob (mutual) should read all 3 of alice''s followers, reads %s', n);
+    assert exists (select 1 from public.follows where follower_id = carol and followee_id = alice),
+        'case 15: bob should read carol -> alice';
+    assert exists (select 1 from public.follows where follower_id = ivan and followee_id = alice),
+        'case 15: bob should read ivan -> alice';
+    select count(*) into n from public.mutuals where user_id = bob and mutual_id = alice;
+    assert n = 1, format('case 15: bob should see his own pair with alice in mutuals, sees %s', n);
+
+    -- 16: the two counts are public, from follow_counts() rather than from
+    -- rows the caller could read: a stranger and a one-way follower get the
+    -- same numbers a mutual would.
+    perform pg_temp.act_as(judy);
+    select f.followers, f.following into n, m from public.follow_counts(alice) f;
+    assert n = 3 and m = 1, format('case 16: follow_counts(alice) as judy should be 3 / 1, is %s / %s', n, m);
+    perform pg_temp.act_as(carol);
+    select f.followers, f.following into n, m from public.follow_counts(alice) f;
+    assert n = 3 and m = 1, format('case 16: follow_counts(alice) as carol should be 3 / 1, is %s / %s', n, m);
+    select f.followers, f.following into n, m from public.follow_counts(judy) f;
+    assert n = 0 and m = 0, format('case 16: follow_counts(judy) should be 0 / 0, is %s / %s', n, m);
+
     -- 10: breaking mutuality takes effect at once — bob's mutuals post leaves
     -- alice's view the moment bob stops following her, while his followers
     -- posts stay, since alice still follows him.
@@ -197,6 +251,12 @@ begin
         'exposure: anon can execute can_view_image';
     assert not has_function_privilege('anon', 'private.is_blocked_by(uuid,uuid)', 'execute'),
         'exposure: anon can execute is_blocked_by';
+    assert not has_function_privilege('anon', 'private.is_mutual(uuid,uuid)', 'execute'),
+        'exposure: anon can execute is_mutual';
+    assert not has_function_privilege('anon', 'public.follow_counts(uuid)', 'execute'),
+        'exposure: anon can execute follow_counts';
+    assert has_function_privilege('authenticated', 'public.follow_counts(uuid)', 'execute'),
+        'exposure: authenticated cannot execute follow_counts';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
 end;

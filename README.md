@@ -22,7 +22,9 @@ every read of a post or a post image goes through. The feed shows only what
 you are permitted to see, and you can follow, unfollow, block and unblock
 people from their profile — reached by tapping a username in the feed or
 looking one up on the Profile tab. What's left of Milestone 7 is the hands-on
-smoke test.
+smoke test. Milestone 8 has started with its privacy fix: follower and
+following counts are public, but the lists behind them are readable only by
+the people at either end of an edge and their mutuals (SOL-66).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -140,8 +142,10 @@ way PostgREST does (`request.jwt.claims` plus the `authenticated` role) and
 asserts every case in SOL-30's matrix: both tiers from the author's, a one-way
 follower's, a mutual's and a stranger's seat; both directions of a block, even
 across a follow edge; the profile rows a blocked pair cannot read; the storage
-policy that signing depends on; and mutuality breaking the moment one side
-unfollows. Everything it touches is rolled back. Run it against the hosted
+policy that signing depends on; mutuality breaking the moment one side
+unfollows; and, since SOL-66, that a follow edge is readable only at either
+end or by a mutual of either end while `follow_counts()` answers for anyone.
+Everything it touches is rolled back. Run it against the hosted
 project after a push and a seed run:
 
 ```bash
@@ -253,14 +257,20 @@ returns both `(user_id, mutual_id)` and its mirror, so "is a mutual with b" is
 one equality lookup, and it is the single definition of friendship that the
 visibility rule and any future ranking read from. It is a `security_invoker`
 view, so it runs under the caller's own RLS on `follows` rather than its
-owner's. There are no follower/following counter columns — `count(*)` is fine
-at this scale, and counters need triggers that will be wrong at least once.
+owner's — which, since SOL-66, means a caller sees their own pairs and those
+of the people they are mutual with rather than everyone's; `can_view_post()`
+reads it as definer and is unaffected. There are no follower/following
+counter columns — counters need triggers that will be wrong at least once —
+and the two numbers a profile shows come from `follow_counts(profile)`, a
+`security definer` function, because since SOL-66 a caller can no longer see
+every row to count them (see RLS below).
 The composite primary key makes a duplicate follow impossible at the database;
 `FollowService.follow` treats that refusal as success, since the state asked
 for already holds and a double tap must not read as a failure. `FollowService`
-also offers `unfollow`, `isFollowing`, `isMutual` (which reads `mutuals`) and
+also offers `unfollow`, `isFollowing`, `isMutual` (which reads `mutuals`),
 `relationship(with:)`, which fetches both directions in one request plus the
-caller's own block. `UserProfileView` is the UI over all of it.
+caller's own block, and `counts(for:)`, which calls `follow_counts`.
+`UserProfileView` is the UI over all of it.
 
 `posts.visibility` is the per-post audience: `followers` (anyone who follows
 the author) or `mutuals` ("friends only" in the app — people the author also
@@ -334,8 +344,16 @@ product's premise lives. A `posts` row is readable only when
 `private.can_view_post(viewer, author, visibility)` says so — see below. A
 `profiles` row is readable unless its owner has blocked you; the person who
 made a block can still read the profile they blocked, since that is where
-Unblock lives. `follows` is readable by every authenticated user on purpose: follower counts
-and the relationship line on a profile need edges the caller didn't create.
+Unblock lives. A `follows` row is readable by the people at either end of it
+and by anyone mutual with either end — your own edges plus the full lists of
+the people you are friends with, and nothing else (SOL-66; it replaced the
+"readable by every authenticated user" policy that SOL-27 shipped with a
+note to revisit). The relationship line and the follow button only ever read
+edges with the caller at one end, so they are unaffected. The two counts a
+profile shows come from `follow_counts(profile)`, a `security definer`
+function callable by any signed-in user: the numbers are public by decision
+(SOL-43), the lists are not, and a counts view under the caller's own RLS
+would have counted only the rows they may see.
 `blocks` is readable, insertable and deletable only by the blocker, with no
 policy at all for the blocked side. On `profiles`, inserts and updates are restricted to the caller's own rows; on
 `posts`, inserts are, and there is no update policy at all, since posts are

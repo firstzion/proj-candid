@@ -34,7 +34,12 @@ enum FollowError: LocalizedError {
 /// The follow graph from the signed-in user's point of view: one directional
 /// edge per `follows` row, with "friends" derived by the `mutuals` view rather
 /// than stored anywhere, and blocks — the one relationship that overrides the
-/// graph — in `blocks`. Service layer only; the UI arrives with SOL-32.
+/// graph — in `blocks`. `UserProfileView` is the UI over it (SOL-32).
+///
+/// Since SOL-66 a `follows` row is readable only at either end or by a mutual
+/// of either end. Every read below asks for edges with the caller at one end,
+/// so none of them noticed; the two public counts come from `counts(for:)`,
+/// which calls a definer function rather than counting rows the policy hides.
 ///
 /// Nothing here decides what a block *means*. The database severs follows
 /// when a block is made, refuses a new follow across one, and (once the
@@ -201,6 +206,27 @@ struct FollowService {
                 .value
             let blocks = try await ownBlock(from: me, of: userID)
             return Self.relationship(me: me, other: userID, edges: edges, blocking: !blocks.isEmpty)
+        } catch {
+            throw Self.mapFollowError(error)
+        }
+    }
+
+    /// Follower and following counts for `profileID`, from the
+    /// `follow_counts` function — one row of two numbers.
+    ///
+    /// The numbers are public by decision (SOL-43); the lists behind them
+    /// are not (SOL-66): a `follows` row is readable only at either end or
+    /// by a mutual of either end, so a `count(*)` on the table from here
+    /// would count only what the caller may see. The function runs as its
+    /// definer and counts every row, which is why a stranger reads "3
+    /// followers" on a profile without being able to read who.
+    func counts(for profileID: UUID) async throws -> FollowCounts {
+        do {
+            return try await client
+                .rpc("follow_counts", params: ["p_profile": profileID])
+                .single()
+                .execute()
+                .value
         } catch {
             throw Self.mapFollowError(error)
         }

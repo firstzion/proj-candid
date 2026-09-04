@@ -292,6 +292,35 @@ struct FollowServiceTests {
         #expect(!FollowService.relationship(me: Self.me, other: Self.other, edges: [meToOther]).blocking)
     }
 
+    /// Public by decision, and computed by a definer function because the
+    /// rows behind them are no longer readable to a non-mutual (SOL-66) — so
+    /// the request has to be the RPC, never a count on the table.
+    @Test("counts asks follow_counts for the one row of two numbers")
+    func countsCallTheFunction() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in .init(body: Data(#"{"followers":3,"following":1}"#.utf8)) }
+
+        let counts = try await Self.makeService().counts(for: Self.other)
+        #expect(counts == FollowCounts(followers: 3, following: 1))
+
+        let request = try #require(StubURLProtocol.requests.last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/rest/v1/rpc/follow_counts")
+        // One object rather than a one-row array — what `.single()` asks
+        // PostgREST for.
+        #expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.pgrst.object+json")
+
+        struct Params: Decodable {
+            let profile: UUID
+            enum CodingKeys: String, CodingKey { case profile = "p_profile" }
+        }
+        let params = try JSONDecoder().decode(Params.self, from: try #require(request.drainedBody))
+        #expect(params.profile == Self.other)
+        // Nothing else is asked: the count is the function's, not a table read.
+        #expect(StubURLProtocol.requests.count == 1)
+    }
+
     // MARK: - Fixtures
 
     private static func queryItems(of request: URLRequest) -> [String: String] {
