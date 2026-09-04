@@ -27,6 +27,13 @@ Package.resolved
 Pods/
 Carthage/Build/
 
-# Local configuration holding backend credentials (see SOL-4)
+# Local configuration holding backend credentials
 Config/Secrets.xcconfig
 *.local.xcconfig
+
+# Supabase CLI local state
+supabase/.branches
+supabase/.temp
+.env
+.env.local
+.env.*.local

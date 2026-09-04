@@ -51,6 +51,58 @@ Empty folders are held in git by a `.gitkeep` file. These are excluded from the 
 via `EXCLUDED_SOURCE_FILE_NAMES`, since Xcode's synchronized folders would otherwise
 copy them into the app bundle.
 
+## Backend
+
+The backend is a hosted Supabase project (no local stack). Schema changes are written
+as migrations under `supabase/migrations/` and pushed with the Supabase CLI.
+
+| | |
+|---|---|
+| Project | `proj-candid` |
+| Project ref | `ztdggewgqaoaixjhttct` |
+| API URL | `https://ztdggewgqaoaixjhttct.supabase.co` |
+| Region | us-west-2 |
+| Dashboard | https://supabase.com/dashboard/project/ztdggewgqaoaixjhttct |
+
+### Credentials
+
+API keys live in the dashboard under **Project Settings → API**, or via
+`supabase projects api-keys --project-ref ztdggewgqaoaixjhttct`.
+
+The app uses the **publishable key** (`sb_publishable_...`). It is designed to be
+shipped in a client and is constrained by Row Level Security. A legacy `anon` JWT key
+also exists on this project and works interchangeably. These are dev-project
+credentials — they are kept out of git regardless, since rotating a committed key is
+more annoying than never committing it.
+
+**The service role key is never used in this repo.** It bypasses RLS completely, so it
+must never appear in the app, in a migration, or in any committed file.
+
+Local credentials go in `Config/Secrets.xcconfig`, which is gitignored. Copy the
+committed template to create it:
+
+```bash
+cp Config/Secrets.example.xcconfig Config/Secrets.xcconfig
+```
+
+### CLI setup
+
+The CLI is installed globally via npm (there is no Homebrew on this machine):
+
+```bash
+npm install -g supabase
+```
+
+Authenticate once, then link the repo to the hosted project:
+
+```bash
+supabase login
+supabase link --project-ref ztdggewgqaoaixjhttct
+```
+
+`link` asks for the database password set when the project was created. Once linked,
+`supabase db push` applies any new migrations to the hosted database.
+
 ## Conventions
 
 - Bundle identifier: `com.firstzion.candid`
