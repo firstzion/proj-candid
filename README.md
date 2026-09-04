@@ -11,10 +11,12 @@ Three-tab shell (Feed, Post, Profile) with placeholder views, wired to a hosted
 Supabase backend. Accounts work: a user can sign up and log in. Feed and Post are
 still placeholders.
 
-Auth screens are reachable from a temporary button on the Profile tab until the
-auth-gated app root lands (SOL-8). Sessions are persisted and refreshed by the
-Supabase SDK itself — `defaultLocalStorage` is `KeychainLocalStorage` and
-`autoRefreshToken` defaults to true, so there is no custom persistence here.
+The app root is session-gated: `RootView` shows the Log In screen when signed out
+and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
+`authStateChanges`. Sessions are persisted and refreshed by the Supabase SDK
+itself — `defaultLocalStorage` is `KeychainLocalStorage` and `autoRefreshToken`
+defaults to true — so there is no custom persistence here. Log Out lives on the
+Profile tab.
 
 ## Requirements
 

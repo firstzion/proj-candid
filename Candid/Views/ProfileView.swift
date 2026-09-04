@@ -1,16 +1,29 @@
 import SwiftUI
 
 struct ProfileView: View {
-    @State private var isShowingAuth = false
+    @EnvironmentObject private var sessionStore: SessionStore
+
+    @State private var isSigningOut = false
+    @State private var signOutError: String?
 
     var body: some View {
         VStack(spacing: 24) {
             Text("Profile")
 
-            // Temporary entry point so the auth screens are reachable before
-            // the auth-gated app root lands in SOL-8.
-            Button("Log In or Sign Up") {
-                isShowingAuth = true
+            if case .signedIn(let email) = sessionStore.state {
+                Text(email ?? "Signed in")
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Log Out") {
+                Task { await signOut() }
+            }
+            .disabled(isSigningOut)
+
+            if let signOutError {
+                Text(signOutError)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
             }
 
             #if DEBUG
@@ -18,22 +31,28 @@ struct ProfileView: View {
             #endif
         }
         .padding()
-        .sheet(isPresented: $isShowingAuth) {
-            NavigationStack {
-                LogInView()
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { isShowingAuth = false }
-                        }
-                    }
-            }
+    }
+
+    private func signOut() async {
+        isSigningOut = true
+        signOutError = nil
+
+        do {
+            try await sessionStore.signOut()
+        } catch {
+            // The SDK clears the local session before calling the server, so
+            // the app is already signed out; this only reports that the
+            // server-side token revocation did not go through.
+            signOutError = "Signed out on this device, but the server call failed: \(error.localizedDescription)"
         }
+
+        isSigningOut = false
     }
 }
 
 #if DEBUG
-/// Debug-only smoke test for <doc:SOL-4>: proves the app can reach the hosted
-/// backend. Removed in Milestone 2 once the Profile tab shows a real account.
+/// Debug-only smoke test from SOL-4: proves the app can reach the hosted
+/// backend. Replaced by real account content in SOL-8.
 private struct BackendConnectionCheck: View {
     private enum State {
         case idle
@@ -96,4 +115,5 @@ private struct BackendConnectionCheck: View {
 
 #Preview {
     ProfileView()
+        .environmentObject(SessionStore())
 }
