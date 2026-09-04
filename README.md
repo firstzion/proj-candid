@@ -123,6 +123,23 @@ so deletes are denied outright. **These read policies are dev-only** — Candid 
 meant to show you your friends' posts, so reads will need to narrow to a friend
 graph once one exists. The migration says so at the top.
 
+### Storage
+
+Post images live in the **private** `post-images` bucket (5 MB cap, `image/jpeg`
+only). Objects are laid out as `{user_id}/{uuid}.jpg`, and the insert policy
+requires the first path segment to equal the caller's `auth.uid()`, so nobody can
+write into another user's folder.
+
+Because the bucket is private, reads go through short-lived signed URLs rather
+than permanent public ones. The durable identifier for an image is therefore its
+object **path**, which is what `posts.image_url` stores; `StorageService.signedURL(for:)`
+mints a URL on demand. Public buckets were the simpler option, but a public bucket
+makes every uploaded photo fetchable forever by anyone with the URL, which is hard
+to reconcile with an app built around sharing to friends — and it is a one-way
+door, since anything already exposed stays exposed.
+
+Uploads are downscaled to a 1600px longest edge and encoded as JPEG at 80%.
+
 ### Auth configuration
 
 Hosted auth settings live in `supabase/config.toml` under `[auth]` and are applied
