@@ -26,6 +26,12 @@ struct FeedView: View {
     /// again until it scrolls off and back on.
     @State private var loadMoreError: String?
 
+    /// The author whose username was just tapped; non-nil pushes their
+    /// profile. Before search exists this is the one way to reach someone
+    /// from inside the app — though only someone whose post you can already
+    /// see, which is why the Profile tab also has a lookup by name.
+    @State private var selectedProfile: Profile?
+
     private enum Phase {
         case loading
         case loaded
@@ -56,12 +62,14 @@ struct FeedView: View {
                 case .loaded:
                     List {
                         ForEach(posts) { post in
-                            FeedPostRow(post: post)
-                                .onAppear {
-                                    if post.id == posts.last?.id {
-                                        Task { await loadMore() }
-                                    }
+                            FeedPostRow(post: post) {
+                                selectedProfile = Profile(id: post.authorID, username: post.username)
+                            }
+                            .onAppear {
+                                if post.id == posts.last?.id {
+                                    Task { await loadMore() }
                                 }
+                            }
                         }
 
                         if isLoadingMore {
@@ -95,6 +103,9 @@ struct FeedView: View {
                 }
             }
             .navigationTitle("Feed")
+            .navigationDestination(item: $selectedProfile) { profile in
+                UserProfileView(profile: profile)
+            }
             .task {
                 // Runs every time the tab is shown; only fetch when there is
                 // nothing on screen or what's there has gone stale.
@@ -109,9 +120,11 @@ struct FeedView: View {
                 Task { await refresh() }
             }
             .onChange(of: feedInvalidation.version) {
-                // A post just succeeded. Refresh regardless of `isStale` —
-                // the person expects to see it now, not up to half an hour
-                // from now.
+                // A post just succeeded, or the graph just changed — a
+                // follow, unfollow, block or unblock. Refresh regardless of
+                // `isStale`: the person expects to see the result now, not up
+                // to half an hour from now, and `refresh` replaces the list,
+                // so rows that are no longer permitted leave with it.
                 Task { await refresh() }
             }
         }
@@ -196,6 +209,10 @@ struct FeedView: View {
 private struct FeedPostRow: View {
     let post: FeedPost
 
+    /// Opens the author's profile — from the username, or from VoiceOver's
+    /// actions rotor, since the row reads as one element.
+    let onOpenProfile: () -> Void
+
     /// How long a post stays on a relative timestamp before switching to an
     /// absolute date — a post from three months ago reading "12 wk" is not
     /// more useful than "Jun 12", and stops changing every time the row
@@ -205,8 +222,14 @@ private struct FeedPostRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(post.username)
-                    .font(.headline)
+                // The author's name opens their profile. Plain style, so only
+                // the name is the target — not the whole row, which a List
+                // would otherwise hand to a default-styled button.
+                Button(action: onOpenProfile) {
+                    Text(post.username)
+                        .font(.headline)
+                }
+                .buttonStyle(.plain)
 
                 Spacer()
 
@@ -240,6 +263,9 @@ private struct FeedPostRow: View {
         // Reads as one element — "username, photo, caption, 5 minutes ago" —
         // rather than four separate stops for VoiceOver to swipe through.
         .accessibilityElement(children: .combine)
+        // Combining swallows the username button, so the same action is
+        // offered where VoiceOver users expect it: in the actions rotor.
+        .accessibilityAction(named: "View profile", onOpenProfile)
     }
 
     private var timestamp: Text {
@@ -253,6 +279,7 @@ private struct FeedPostRow: View {
 
 #Preview {
     FeedView()
+        .environmentObject(SessionStore(client: .preview))
         .environment(\.services, AppServices(client: .preview))
         .environment(FeedInvalidation())
 }

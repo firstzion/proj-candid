@@ -18,8 +18,11 @@ to every signed-in user. The graph itself is in — the `follows` table, the
 derived `mutuals` view and `FollowService` — and so are per-post visibility,
 chosen at posting time and fixed from then on, blocking's data model, and the
 rule that ties them together: `can_view_post()`, one Postgres function that
-every read of a post or a post image goes through. The feed now shows only
-what you are permitted to see. What's left is the follow and block UI.
+every read of a post or a post image goes through. The feed shows only what
+you are permitted to see, and you can follow, unfollow, block and unblock
+people from their profile — reached by tapping a username in the feed or
+looking one up on the Profile tab. What's left of Milestone 7 is the hands-on
+smoke test.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -41,6 +44,20 @@ after you post, so a just-posted photo does not sit unseen for up to half an
 hour. Decoded images are cached by storage path rather than URL, so a refresh
 does not re-download every photo already on screen.
 
+Following, unfollowing, blocking or unblocking someone refreshes the feed the
+same way posting does: the action marks it stale (`FeedInvalidation`), the
+feed refetches its newest page and replaces its list, and rows that are no
+longer permitted disappear without a restart — a friend's friends-only posts
+when the friendship breaks, everything of theirs when you block them. That
+blanket refresh is the whole invalidation strategy, and it is enough at this
+scale. What is deliberately *not* invalidated: `ImageCache`, which is keyed by
+storage path and only ever drawn through a visible row, so no bitmap renders
+for a post that is no longer on screen, and purging it would re-download every
+photo after each follow. A change made by the other party — they unfollow or
+block you — shows up at your next refresh: pull, returning to the foreground
+after the feed has gone stale, or the half-hour mark. That is the same window
+signed URLs already have.
+
 The app root is session-gated: `RootView` shows the Log In screen when signed out
 and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
 `authStateChanges`. Sessions are persisted and refreshed by the Supabase SDK
@@ -52,7 +69,13 @@ it in the background. The SDK's legacy default refreshes *first* and reports no
 session at all if that fails, which sent a still-signed-in user launching
 offline to the Log In screen — and then bounced them back into the app when the
 auto-refresh eventually got through. The Profile tab shows the signed-in user's
-username from their `profiles` row, plus Log Out.
+username from their `profiles` row, a "Find people" lookup by exact username,
+Log Out and Delete Account. Someone else's profile — from that lookup, or from
+tapping a username in the feed — shows where you stand (following, follows
+you, friends, blocked) with Follow/Unfollow and Block/Unblock; every control
+changes immediately and changes back with a message if the request fails. The
+lookup answers "No one by that name" for a typo, a name nobody has, and
+someone who has blocked you alike — deliberately, since a block is silent.
 
 ## Requirements
 
@@ -107,7 +130,8 @@ each method builds — table, HTTP method, filters, body — because a wrong fil
 there is a silent bug (unfollowing nobody, or everybody) that only a live
 project would otherwise reveal. The signed-in user's id is injected into the
 service under test, since a live session is the one thing the stub cannot
-stand in for. Both suites build their client with `TestSupabaseClient` in
+stand in for. `ProfileServiceRequestTests` pins the exact-username lookup the
+same way. All of them build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
 The authorization rule itself is tested in SQL, not Swift.
@@ -142,7 +166,7 @@ Candid/
                       AuthService, ProfileService, PostService, FeedService,
                       FollowService, StorageService, ImageCache, ImageDownsampler
   Views/              RootView (session gate), ConfigurationErrorView, auth
-                      screens, RootTabView and tabs
+                      screens, RootTabView and tabs, UserProfileView
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -235,8 +259,8 @@ The composite primary key makes a duplicate follow impossible at the database;
 `FollowService.follow` treats that refusal as success, since the state asked
 for already holds and a double tap must not read as a failure. `FollowService`
 also offers `unfollow`, `isFollowing`, `isMutual` (which reads `mutuals`) and
-`relationship(with:)`, which fetches both directions in one request. There is
-no follow UI yet.
+`relationship(with:)`, which fetches both directions in one request plus the
+caller's own block. `UserProfileView` is the UI over all of it.
 
 `posts.visibility` is the per-post audience: `followers` (anyone who follows
 the author) or `mutuals` ("friends only" in the app — people the author also
@@ -259,28 +283,32 @@ has blocked b. Everything a block does happens in the database, so no query
 has to remember to check. An `after insert` trigger severs the follow in both
 directions in the same transaction — a block that left the follow intact
 would be a bug waiting to surface — and the `follows` insert policy refuses a
-new edge across a block in either direction for as long as it stands. Hiding
-each side's posts and profile from the other arrives with the
-`can_view_post()` rule (SOL-30), which is written block-aware from the start.
-Unblocking deletes the row and restores nothing: the severed follows stay
-severed, and either side may follow again from scratch. Blocking is silent.
-The table is readable only by the person who made the block, and a refused
-follow reaches the blocked person as an ordinary RLS error, which
-`FollowService` words as "Couldn't follow this account right now" — never
-why. `FollowService.block`, `unblock`, `isBlocking` and `relationship(with:)`
-(which now reports `blocking`) are the whole client surface; there is no
-block UI yet.
+new edge across a block in either direction for as long as it stands. Each
+side's posts are hidden from the other by the `can_view_post()` rule (SOL-30),
+which is written block-aware. The blocker's *profile* is hidden from the
+blocked person too, but the blocker can still see the blocked profile — that
+is where Unblock lives, and a block that could never be lifted from the app
+would be a bug. Unblocking deletes the row and restores nothing: the severed
+follows stay severed, and either side may follow again from scratch.
+Blocking is silent. The table is readable only by the person who made the
+block, and a refused follow reaches the blocked person as an ordinary RLS
+error, which `FollowService` words as "Couldn't follow this account right
+now" — never why. `FollowService.block`, `unblock`, `isBlocking` and
+`relationship(with:)` (which reports `blocking`) are the client surface;
+`UserProfileView` puts Block behind a confirmation that says what will
+happen, and Unblock in its place once blocked.
 
-The helper the policies call, `private.is_blocked_either_way(a, b)`, lives in
-a `private` schema that PostgREST does not expose. Any function in `public`
-that `authenticated` may execute is also an RPC endpoint, and a policy needs
-`authenticated` to execute this one — so in `public`, any signed-in user could
-ask "has alice blocked bob?" in a single request, which is exactly what silent
-blocking forbids. A function in `private` is callable from a policy and from
-nowhere else; `authenticated` has `usage` on the schema and `execute` on the
-function, `anon` has neither. The `can_view_post()` family will live there
-too. Trigger functions stay in `public` with `execute` revoked, as
-`handle_new_user` does — a trigger needs no callers.
+The helpers the policies call — `private.is_blocked_either_way(a, b)` and
+`private.is_blocked_by(viewer, owner)` — live in a `private` schema that
+PostgREST does not expose. Any function in `public` that `authenticated` may
+execute is also an RPC endpoint, and a policy needs `authenticated` to execute
+these — so in `public`, any signed-in user could ask "has alice blocked bob?"
+in a single request, which is exactly what silent blocking forbids. A function
+in `private` is callable from a policy and from nowhere else; `authenticated`
+has `usage` on the schema and `execute` on the functions, `anon` has neither.
+The `can_view_post()` family lives there too. Trigger functions stay in
+`public` with `execute` revoked, as `handle_new_user` does — a trigger needs
+no callers.
 
 Usernames are stored lowercase. The trigger lowercases and trims what the
 metadata carries, and a CHECK constraint enforces `^[a-z0-9_]{3,30}$`; because
@@ -304,8 +332,9 @@ turn every server-side failure into a report of a user mistake.
 RLS is enabled on all four tables, and the read policies are where the
 product's premise lives. A `posts` row is readable only when
 `private.can_view_post(viewer, author, visibility)` says so — see below. A
-`profiles` row is readable unless the two of you have blocked each other.
-`follows` is readable by every authenticated user on purpose: follower counts
+`profiles` row is readable unless its owner has blocked you; the person who
+made a block can still read the profile they blocked, since that is where
+Unblock lives. `follows` is readable by every authenticated user on purpose: follower counts
 and the relationship line on a profile need edges the caller didn't create.
 `blocks` is readable, insertable and deletable only by the blocker, with no
 policy at all for the blocked side. On `profiles`, inserts and updates are restricted to the caller's own rows; on

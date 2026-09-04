@@ -1,6 +1,16 @@
 import Foundation
 
 extension URLRequest {
+    /// The query string as PostgREST will read it — percent-decoded, so an
+    /// `or=` filter's parentheses and commas compare as written. A repeated
+    /// name keeps its first value.
+    var queryParameters: [String: String] {
+        guard let url, let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else {
+            return [:]
+        }
+        return Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// The request body as data, whichever way `URLSession` chose to carry it.
     ///
     /// `URLSession` converts a request's `httpBody` into `httpBodyStream`

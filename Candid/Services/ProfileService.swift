@@ -46,6 +46,34 @@ struct ProfileService {
         }
     }
 
+    /// The profile with exactly this username, or nil if there is none the
+    /// caller may see.
+    ///
+    /// Normalises the way sign-up does (lower, trim), so "Alice " finds
+    /// alice. A name that could not exist — wrong characters, wrong length —
+    /// is answered nil without a request. Nil also covers a real account
+    /// whose owner has blocked the caller: the profiles read policy hides it,
+    /// and the answer is the same as for a typo on purpose, because a block
+    /// is silent to the person on the other side of it. The smallest path
+    /// from "signed up" to "following someone" until search exists (SOL-39).
+    func profile(username: String) async throws -> Profile? {
+        let username = UsernameRules.normalized(username)
+        guard UsernameRules.validationProblem(username) == nil else { return nil }
+
+        do {
+            let rows: [Profile] = try await client
+                .from("profiles")
+                .select()
+                .eq("username", value: username)
+                .limit(1)
+                .execute()
+                .value
+            return rows.first
+        } catch {
+            throw Self.mapProfileError(error)
+        }
+    }
+
     /// Distinguishes "nobody is signed in" from "signed in, but the session
     /// could not be refreshed just now" — typically no network. Both used to
     /// come out as `.notSignedIn`, contradicting the tabs the person was

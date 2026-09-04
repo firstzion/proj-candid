@@ -26,10 +26,19 @@ final class SessionStore: ObservableObject {
     enum State: Equatable {
         case loading
         case signedOut
-        case signedIn(email: String?)
+        case signedIn(userID: UUID, email: String?)
     }
 
     @Published private(set) var state: State = .loading
+
+    /// The signed-in user's id, or nil when nobody is. What a screen showing
+    /// another person's profile compares against to know whether it is
+    /// looking at you — the one question about identity a view needs
+    /// answered synchronously, without a service call.
+    var currentUserID: UUID? {
+        if case .signedIn(let userID, _) = state { return userID }
+        return nil
+    }
 
     private let client: SupabaseClient
 
@@ -65,7 +74,7 @@ final class SessionStore: ObservableObject {
     /// even an expired one, which the SDK is refreshing — and nil means
     /// signed out.
     private func update(from session: Session?) {
-        let newState: State = session.map { .signedIn(email: $0.user.email) } ?? .signedOut
+        let newState: State = session.map { .signedIn(userID: $0.user.id, email: $0.user.email) } ?? .signedOut
         if newState != state {
             state = newState
         }

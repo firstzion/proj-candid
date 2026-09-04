@@ -294,13 +294,8 @@ struct FollowServiceTests {
 
     // MARK: - Fixtures
 
-    /// The query string as PostgREST will read it — percent-decoded, so an
-    /// `or=` filter's parentheses and commas compare as written.
     private static func queryItems(of request: URLRequest) -> [String: String] {
-        guard let url = request.url, let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else {
-            return [:]
-        }
-        return Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
+        request.queryParameters
     }
 
     /// `follows` rows as PostgREST returns them — lower-case uuids, as
