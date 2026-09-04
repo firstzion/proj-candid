@@ -85,6 +85,23 @@ committed template to create it:
 cp Config/Secrets.example.xcconfig Config/Secrets.xcconfig
 ```
 
+### Schema
+
+| Table | Columns |
+|---|---|
+| `profiles` | `id` (PK → `auth.users`), `username` (unique), `created_at` |
+| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_url`, `caption` (nullable), `created_at` |
+
+A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
+taking `username` from the sign-up metadata and falling back to a generated
+placeholder. Deleting an auth user cascades to their profile and posts.
+
+RLS is enabled on both tables. Reads are open to any authenticated user; inserts
+and updates are restricted to the caller's own rows. There are no delete policies,
+so deletes are denied outright. **These read policies are dev-only** — Candid is
+meant to show you your friends' posts, so reads will need to narrow to a friend
+graph once one exists. The migration says so at the top.
+
 ### CLI setup
 
 The CLI is installed globally via npm (there is no Homebrew on this machine):
