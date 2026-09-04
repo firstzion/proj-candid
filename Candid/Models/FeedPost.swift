@@ -1,10 +1,14 @@
 import Foundation
 
 /// One post as shown in the feed: a `posts` row joined with its author's
-/// `profiles.username`, carrying a ready-to-display signed URL for the image
-/// rather than the raw storage path — see `StorageService`, which mints it.
+/// `profiles.username`, carrying both the image's storage path — its durable
+/// identity, which `ImageCache` keys on — and a ready-to-display signed URL
+/// for fetching it, minted by `StorageService` and different every time.
 struct FeedPost: Identifiable, Equatable {
     let id: UUID
+
+    /// The object path in the `post-images` bucket, `{user_id}/{uuid}.jpg`.
+    let imagePath: String
 
     /// Nil when the object could not be signed — most likely it no longer
     /// exists. The post is still shown, with a placeholder, rather than

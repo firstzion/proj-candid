@@ -192,6 +192,14 @@ to reconcile with an app built around sharing to friends — and it is a one-way
 door, since anything already exposed stays exposed.
 
 Uploads are downscaled to a 1600px longest edge and encoded as JPEG at 80%.
+Photos are decoded straight to that size when picked (`ImageDownsampler`, via
+ImageIO's thumbnailing), so the full-size bitmap — around 200 MB for a
+48-megapixel HEIC — is never built; camera captures are downscaled before they
+are held. On the read side the feed keeps decoded images in `ImageCache`, keyed
+by storage path rather than URL: a signed URL is different every time it is
+minted, which defeats `AsyncImage` and `URLCache` and had every refresh
+re-downloading every image. A freshly uploaded photo is seeded into the cache so
+the poster's own post appears without a download.
 
 ### Auth configuration
 

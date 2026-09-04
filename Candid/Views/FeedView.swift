@@ -193,26 +193,7 @@ private struct FeedPostRow: View {
             Text(post.username)
                 .font(.headline)
 
-            if let imageURL = post.imageURL {
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFit()
-                    case .failure:
-                        missingImage
-                    case .empty:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 200)
-                    @unknown default:
-                        EmptyView()
-                    }
-                }
-            } else {
-                // The object behind this post could not be signed — see
-                // `FeedPost.imageURL`. Handled here because `AsyncImage` given
-                // a nil URL never leaves `.empty`: a spinner that never stops.
-                missingImage
-            }
+            PostImageView(path: post.imagePath, url: post.imageURL)
 
             if let caption = post.caption {
                 Text(caption)
@@ -223,13 +204,6 @@ private struct FeedPostRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
-    }
-
-    private var missingImage: some View {
-        Image(systemName: "photo")
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, minHeight: 200)
     }
 }
 

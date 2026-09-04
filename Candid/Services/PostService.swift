@@ -55,6 +55,11 @@ struct PostService {
 
         let imagePath = try await StorageService().uploadPostImage(image, userId: userId)
 
+        // What was just uploaded is what the feed will show next, and the
+        // image is already here: seed the cache so the poster's own post
+        // appears without a download.
+        ImageCache.shared.store(image, for: imagePath)
+
         do {
             try await client
                 .from("posts")

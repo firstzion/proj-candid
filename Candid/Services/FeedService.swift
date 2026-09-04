@@ -63,6 +63,7 @@ struct FeedService {
             let posts = pageRows.map { row in
                 FeedPost(
                     id: row.id,
+                    imagePath: row.imagePath,
                     imageURL: signedURLs[row.imagePath],
                     caption: row.caption,
                     createdAt: row.createdAt,
