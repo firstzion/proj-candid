@@ -181,7 +181,11 @@ own JWT is all it takes) and the feed would show that photo under their name.
 Post images live in the **private** `post-images` bucket (5 MB cap, `image/jpeg`
 only). Objects are laid out as `{user_id}/{uuid}.jpg`, and the insert policy
 requires the first path segment to equal the caller's `auth.uid()`, so nobody can
-write into another user's folder.
+write into another user's folder. A delete policy is scoped the same way, so a
+user can remove only their own objects: the client uses it to take back an upload
+whose post row failed to be written, and it is what deleting a post or an account
+will need. There is no update policy — posts are immutable, and an overwrite of a
+referenced object would silently change a post's photo.
 
 Because the bucket is private, reads go through short-lived signed URLs rather
 than permanent public ones. The durable identifier for an image is therefore its

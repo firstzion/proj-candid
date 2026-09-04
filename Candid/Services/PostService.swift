@@ -33,10 +33,10 @@ struct PostService {
     /// image that does not exist. Inserting first would produce exactly that
     /// broken row whenever an upload failed.
     ///
-    /// The unused object cannot currently be tidied up from the client: storage
-    /// has no delete policy, by design. Rare, and a stray object is cheaper than
-    /// a broken feed entry, but it is a slow leak worth revisiting if uploads
-    /// ever fail often.
+    /// When the insert does fail, the object just uploaded is removed again —
+    /// best effort, since the insert failure is the error worth reporting and a
+    /// leaked object is the lesser problem if the delete fails too. Before the
+    /// storage delete policy existed this was a slow, permanent leak.
     func createPost(image: UIImage, caption: String) async throws {
         let client = try SupabaseService.shared.client()
 
@@ -55,11 +55,6 @@ struct PostService {
 
         let imagePath = try await StorageService().uploadPostImage(image, userId: userId)
 
-        // What was just uploaded is what the feed will show next, and the
-        // image is already here: seed the cache so the poster's own post
-        // appears without a download.
-        ImageCache.shared.store(image, for: imagePath)
-
         do {
             try await client
                 .from("posts")
@@ -72,8 +67,18 @@ struct PostService {
                 )
                 .execute()
         } catch {
+            // No row points at the object just uploaded, so take it back.
+            // Best effort: the insert failure is the error worth reporting,
+            // and a leaked object is the lesser problem if this fails too.
+            try? await StorageService().deletePostImage(at: imagePath)
             throw Self.mapPostError(error)
         }
+
+        // What was just posted is what the feed will show next, and the image
+        // is already here: seed the cache so the poster's own post appears
+        // without a download. After the insert, so a failed post leaves
+        // nothing behind here either.
+        ImageCache.shared.store(image, for: imagePath)
     }
 
     /// Blank and whitespace-only captions are stored as SQL NULL rather than an

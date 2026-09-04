@@ -64,6 +64,20 @@ struct StorageService {
         return path
     }
 
+    /// Removes the object at `path`. Used to take back an upload whose post
+    /// row could not be written; the storage policy allows deleting only
+    /// within the caller's own folder.
+    func deletePostImage(at path: String) async throws {
+        let client = try SupabaseService.shared.client()
+        do {
+            try await client.storage
+                .from(Self.bucket)
+                .remove(paths: [path])
+        } catch {
+            throw Self.mapStorageError(error)
+        }
+    }
+
     /// Mints signed URLs for several objects in one request — what the feed
     /// (SOL-13) uses instead of one round trip per post.
     ///
