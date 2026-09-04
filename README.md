@@ -1,5 +1,7 @@
 # Candid
 
+[![CI](https://github.com/firstzion/proj-candid/actions/workflows/ci.yml/badge.svg)](https://github.com/firstzion/proj-candid/actions/workflows/ci.yml)
+
 An iOS-first photo-sharing app built for human connection, not engagement metrics.
 No bots, no AI-generated content, no ads — what you see comes from your friends.
 
@@ -59,6 +61,11 @@ xcodebuild -project Candid.xcodeproj -scheme Candid -configuration Debug \
 xcodebuild -project Candid.xcodeproj -scheme Candid \
   -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same command on every push and pull
+request, against whichever iPhone simulator the runner's image happens to
+have available — it asks `simctl` rather than hardcoding a device name, so an
+image update can't break the build by renaming or dropping one.
 
 Unit tests live in `CandidTests/` and use Swift Testing. They cover the pure
 logic most likely to rot quietly: the error-mapping functions, which translate

@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # Package.resolved pins the exact versions SPM will fetch, so it is the
+      # right cache key input — unlike project.pbxproj, it only changes when a
+      # dependency actually changes.
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('Candid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      # Hardcoding a device name risks it not existing on the runner's
+      # simulator image; the runner's own available-devices list already
+      # knows what does, so ask it instead of guessing.
+      - name: Pick a simulator
+        id: simulator
+        run: |
+          name=$(xcrun simctl list devices available | grep -E '^\s+iPhone [0-9]' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*$//')
+          if [ -z "$name" ]; then
+            echo "::error::No available iPhone simulator found on this runner."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Testing against: $name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: >
+          xcodebuild -project Candid.xcodeproj -scheme Candid
+          -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.name }}"
+          -resultBundlePath TestResults
+          test
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
