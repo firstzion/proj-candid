@@ -29,7 +29,13 @@ enum SupabaseConfigurationError: LocalizedError {
 /// Configuration is resolved once at init and the outcome kept, so a missing or
 /// malformed config surfaces as a thrown error at the call site rather than a
 /// crash on launch.
-final class SupabaseService {
+///
+/// `@unchecked Sendable`: `clientResult` is a `let`, written once by `init`
+/// and never mutated again, so concurrent reads of `shared` are safe. The
+/// compiler can't verify that on its own — `Result<SupabaseClient, Error>`
+/// isn't provably `Sendable`, since the boxed `Error` existential isn't —
+/// which is exactly what strict concurrency checking flagged here.
+final class SupabaseService: @unchecked Sendable {
     static let shared = SupabaseService()
 
     private let clientResult: Result<SupabaseClient, Error>
@@ -79,4 +85,17 @@ final class SupabaseService {
         // Secrets.xcconfig would have become part of the URL.
         return value
     }
+}
+
+extension SupabaseClient {
+    /// A non-functional client for SwiftUI `#Preview`s, which have no launch
+    /// sequence to resolve `Info.plist` and build a real one. Constructing a
+    /// client does no I/O by itself, so this is safe to use freely; any
+    /// service call made through it simply fails, same as a preview with no
+    /// session already does today, landing in that view's existing error
+    /// state rather than crashing.
+    static let preview = SupabaseClient(
+        supabaseURL: URL(string: "https://example.supabase.co")!,
+        supabaseKey: "preview"
+    )
 }

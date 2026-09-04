@@ -19,13 +19,13 @@ enum ProfileError: LocalizedError {
 }
 
 struct ProfileService {
+    let client: SupabaseClient
+
     /// Loads the signed-in user's own `profiles` row.
     ///
     /// Reads `auth.session` rather than `currentSession` so an expired access
     /// token is refreshed before the query, instead of failing under RLS.
     func currentProfile() async throws -> Profile {
-        let client = try SupabaseService.shared.client()
-
         let userID: UUID
         do {
             userID = try await client.auth.session.user.id
@@ -94,8 +94,6 @@ struct ProfileService {
     /// not a live session row, so it keeps working even after the account
     /// row behind it is gone.
     func deleteAccount() async throws {
-        let client = try SupabaseService.shared.client()
-
         let userID: UUID
         do {
             userID = try await client.auth.session.user.id
@@ -113,10 +111,10 @@ struct ProfileService {
         // my account" asked for. A failure here leaves orphaned objects in
         // storage — harmless, since nothing references them any more — so
         // it is not worth surfacing as a failure of the request as a whole.
-        try? await Self.removeAllStorageObjects(forUserFolder: userID, client: client)
+        try? await removeAllStorageObjects(forUserFolder: userID)
     }
 
-    private static func removeAllStorageObjects(forUserFolder userID: UUID, client: SupabaseClient) async throws {
+    private func removeAllStorageObjects(forUserFolder userID: UUID) async throws {
         let folder = userID.uuidString.lowercased()
         let pageSize = 100
         var offset = 0

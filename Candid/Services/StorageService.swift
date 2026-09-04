@@ -26,6 +26,8 @@ enum StorageServiceError: LocalizedError {
 /// is its object *path*, and a URL is minted on demand at read time — see
 /// `signedURLs(for:)`, which the feed uses.
 struct StorageService {
+    let client: SupabaseClient
+
     static let bucket = "post-images"
 
     /// Longest edge in pixels after downscaling.
@@ -42,8 +44,6 @@ struct StorageService {
     /// was a wasted round trip with its own way to fail *after* the object was
     /// already up — and a retry then uploaded a second, orphaned copy.
     func uploadPostImage(_ image: UIImage, userId: UUID) async throws -> String {
-        let client = try SupabaseService.shared.client()
-
         guard let data = Self.jpegData(for: image) else {
             throw StorageServiceError.imageEncodingFailed
         }
@@ -68,7 +68,6 @@ struct StorageService {
     /// row could not be written; the storage policy allows deleting only
     /// within the caller's own folder.
     func deletePostImage(at path: String) async throws {
-        let client = try SupabaseService.shared.client()
         do {
             try await client.storage
                 .from(Self.bucket)
@@ -90,7 +89,6 @@ struct StorageService {
     ) async throws -> [String: URL] {
         guard !paths.isEmpty else { return [:] }
 
-        let client = try SupabaseService.shared.client()
         do {
             let results = try await client.storage
                 .from(Self.bucket)

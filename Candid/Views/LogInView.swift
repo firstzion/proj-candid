@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct LogInView: View {
+    @Environment(\.services) private var services
+
     @State private var email = ""
     @State private var password = ""
     @State private var isSubmitting = false
@@ -51,7 +53,9 @@ struct LogInView: View {
         message = nil
 
         do {
-            try await AuthService().signIn(email: email, password: password)
+            // `services` is set once, at the app root, before `RootView` (and
+            // therefore this view) ever renders — see `CandidApp`.
+            try await services!.auth.signIn(email: email, password: password)
         } catch {
             message = .failure(error.localizedDescription)
         }
@@ -64,4 +68,5 @@ struct LogInView: View {
     NavigationStack {
         LogInView()
     }
+    .environment(\.services, AppServices(client: .preview))
 }

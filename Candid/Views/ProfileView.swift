@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ProfileView: View {
     @EnvironmentObject private var sessionStore: SessionStore
+    @Environment(\.services) private var services
 
     @State private var profileState: ProfileState = .loading
     @State private var isSigningOut = false
@@ -91,7 +92,7 @@ struct ProfileView: View {
     private func loadProfile() async {
         profileState = .loading
         do {
-            profileState = .loaded(try await ProfileService().currentProfile())
+            profileState = .loaded(try await services!.profile.currentProfile())
         } catch {
             profileState = .failed(error.localizedDescription)
         }
@@ -121,7 +122,7 @@ struct ProfileView: View {
         deleteAccountError = nil
 
         do {
-            try await ProfileService().deleteAccount()
+            try await services!.profile.deleteAccount()
             try await sessionStore.signOut()
         } catch {
             deleteAccountError = error.localizedDescription
@@ -133,5 +134,6 @@ struct ProfileView: View {
 
 #Preview {
     ProfileView()
-        .environmentObject(SessionStore())
+        .environmentObject(SessionStore(client: .preview))
+        .environment(\.services, AppServices(client: .preview))
 }

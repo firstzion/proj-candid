@@ -31,6 +31,16 @@ final class SessionStore: ObservableObject {
 
     @Published private(set) var state: State = .loading
 
+    private let client: SupabaseClient
+
+    /// `CandidApp` only ever constructs a `SessionStore` once it already has
+    /// a live client — see `AppServices` — so there is no configuration
+    /// failure to handle here; a client that can't be built shows a
+    /// configuration-error screen before a `SessionStore` is ever created.
+    init(client: SupabaseClient) {
+        self.client = client
+    }
+
     /// Mirrors the SDK's auth state for as long as the calling task lives.
     ///
     /// Run from `.task` on the root view: that task lasts the life of the
@@ -41,13 +51,6 @@ final class SessionStore: ObservableObject {
     /// precisely to escape that lifetime, which read as a bug rather than a
     /// decision.
     func observe() async {
-        guard let client = try? SupabaseService.shared.client() else {
-            // Misconfigured build: treat as signed out so the app still
-            // renders. The config error surfaces on the first auth attempt.
-            update(from: nil)
-            return
-        }
-
         // `AsyncStream` ends its iteration when the task is cancelled, so
         // cancellation needs no check of its own.
         for await (_, session) in client.auth.authStateChanges {
@@ -73,7 +76,6 @@ final class SessionStore: ObservableObject {
     /// The SDK clears the local session and emits `.signedOut` before calling
     /// the server, so this takes effect even when the network call fails.
     func signOut() async throws {
-        let client = try SupabaseService.shared.client()
         try await client.auth.signOut()
     }
 }

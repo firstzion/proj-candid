@@ -75,8 +75,9 @@ struct SignUpResult {
 }
 
 struct AuthService {
+    let client: SupabaseClient
+
     func signUp(email: String, password: String, username: String) async throws -> SignUpResult {
-        let client = try SupabaseService.shared.client()
         let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let username = UsernameRules.normalized(username)
 
@@ -90,7 +91,7 @@ struct AuthService {
         // Ask before creating the auth user, for the same reason: a duplicate
         // that fails inside the trigger is unrecognisable by the time it gets
         // here. Advisory only — see `isUsernameAvailable`.
-        guard try await isUsernameAvailable(username, client: client) else {
+        guard try await isUsernameAvailable(username) else {
             throw SignUpError.usernameTaken
         }
 
@@ -116,7 +117,7 @@ struct AuthService {
     /// moment and one of them then loses the race inside the sign-up trigger;
     /// `mapSignUpError` words that outcome as a possibly-taken username rather
     /// than asserting it.
-    private func isUsernameAvailable(_ username: String, client: SupabaseClient) async throws -> Bool {
+    private func isUsernameAvailable(_ username: String) async throws -> Bool {
         do {
             return try await client
                 .rpc("username_available", params: ["candidate": username])
@@ -132,7 +133,6 @@ struct AuthService {
     /// delivers the new session there. Returning identity here too would give
     /// the app two places to read it from.
     func signIn(email: String, password: String) async throws {
-        let client = try SupabaseService.shared.client()
         let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {

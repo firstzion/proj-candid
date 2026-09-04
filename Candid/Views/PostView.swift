@@ -3,6 +3,8 @@ import SwiftUI
 import UIKit
 
 struct PostView: View {
+    @Environment(\.services) private var services
+
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     @State private var caption = ""
@@ -171,7 +173,7 @@ struct PostView: View {
         message = nil
 
         do {
-            try await PostService().createPost(image: image, caption: caption)
+            try await services!.post.createPost(image: image, caption: caption)
             // Only reset once the row is actually written, so a failure leaves
             // the photo and caption in place to retry rather than discarding
             // work the person would have to redo.
@@ -233,4 +235,5 @@ private struct CameraPicker: UIViewControllerRepresentable {
 
 #Preview {
     PostView()
+        .environment(\.services, AppServices(client: .preview))
 }

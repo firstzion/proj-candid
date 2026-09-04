@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FeedView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.services) private var services
 
     @State private var posts: [FeedPost] = []
     @State private var phase: Phase = .loading
@@ -129,7 +130,7 @@ struct FeedView: View {
     /// are re-fetched as the user scrolls.
     private func refresh() async {
         do {
-            let page = try await FeedService().fetchPosts(limit: Self.pageSize)
+            let page = try await services!.feed.fetchPosts(limit: Self.pageSize)
             generation += 1
             posts = page.posts
             loadedAt = Date()
@@ -156,7 +157,7 @@ struct FeedView: View {
         let startedIn = generation
         let page: FeedPage
         do {
-            page = try await FeedService().fetchPosts(before: posts.last?.cursor, limit: Self.pageSize)
+            page = try await services!.feed.fetchPosts(before: posts.last?.cursor, limit: Self.pageSize)
         } catch {
             // `reachedEnd` stays false, so the retry row under the posts — or
             // scrolling the last one off and back on, or pulling to refresh —
@@ -209,4 +210,5 @@ private struct FeedPostRow: View {
 
 #Preview {
     FeedView()
+        .environment(\.services, AppServices(client: .preview))
 }

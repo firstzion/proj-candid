@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SignUpView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.services) private var services
 
     @State private var email = ""
     @State private var password = ""
@@ -68,7 +69,7 @@ struct SignUpView: View {
         message = nil
 
         do {
-            let result = try await AuthService().signUp(
+            let result = try await services!.auth.signUp(
                 email: email,
                 password: password,
                 username: username
@@ -89,4 +90,5 @@ struct SignUpView: View {
     NavigationStack {
         SignUpView()
     }
+    .environment(\.services, AppServices(client: .preview))
 }

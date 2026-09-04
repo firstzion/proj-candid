@@ -26,6 +26,8 @@ enum PostError: LocalizedError {
 }
 
 struct PostService {
+    let client: SupabaseClient
+
     /// Uploads the image, then records the post.
     ///
     /// Order matters. Uploading first means a failure part-way leaves an unused
@@ -38,8 +40,6 @@ struct PostService {
     /// leaked object is the lesser problem if the delete fails too. Before the
     /// storage delete policy existed this was a slow, permanent leak.
     func createPost(image: UIImage, caption: String) async throws {
-        let client = try SupabaseService.shared.client()
-
         // Cheapest check first: refusing here costs nothing, whereas letting the
         // database's CHECK constraint refuse it would come after the image had
         // already been uploaded — an orphaned object for a long caption.
@@ -53,7 +53,7 @@ struct PostService {
             throw Self.mapSessionError(error)
         }
 
-        let imagePath = try await StorageService().uploadPostImage(image, userId: userId)
+        let imagePath = try await StorageService(client: client).uploadPostImage(image, userId: userId)
 
         do {
             try await client
@@ -70,7 +70,7 @@ struct PostService {
             // No row points at the object just uploaded, so take it back.
             // Best effort: the insert failure is the error worth reporting,
             // and a leaked object is the lesser problem if this fails too.
-            try? await StorageService().deletePostImage(at: imagePath)
+            try? await StorageService(client: client).deletePostImage(at: imagePath)
             throw Self.mapPostError(error)
         }
 

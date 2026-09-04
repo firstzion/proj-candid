@@ -13,6 +13,8 @@ enum FeedServiceError: LocalizedError {
 }
 
 struct FeedService {
+    let client: SupabaseClient
+
     static let defaultLimit = 20
 
     /// Fetches one page of posts, newest first, each carrying its author's
@@ -25,8 +27,6 @@ struct FeedService {
     /// length. An empty `posts` table (or an exhausted cursor) returns an
     /// empty page rather than throwing.
     func fetchPosts(before cursor: FeedCursor? = nil, limit: Int = FeedService.defaultLimit) async throws -> FeedPage {
-        let client = try SupabaseService.shared.client()
-
         do {
             var query = client
                 .from("posts")
@@ -53,7 +53,7 @@ struct FeedService {
 
             guard !pageRows.isEmpty else { return FeedPage(posts: [], hasMore: false) }
 
-            let signedURLs = try await StorageService().signedURLs(for: pageRows.map(\.imagePath))
+            let signedURLs = try await StorageService(client: client).signedURLs(for: pageRows.map(\.imagePath))
 
             // A row whose image didn't come back (e.g. the object went
             // missing) keeps its place with a nil URL rather than being

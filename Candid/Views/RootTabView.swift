@@ -23,4 +23,6 @@ struct RootTabView: View {
 
 #Preview {
     RootTabView()
+        .environmentObject(SessionStore(client: .preview))
+        .environment(\.services, AppServices(client: .preview))
 }
