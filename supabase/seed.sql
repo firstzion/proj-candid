@@ -86,6 +86,12 @@ from new_users;
 -- feed shows a real range of relative timestamps instead of ten posts that
 -- all read "just now".
 --
+-- Visibility (SOL-29) is deterministic rather than random, so a tester can
+-- tell the tiers apart: each account's third post is friends-only
+-- ('mutuals'), the other two are 'followers', and the caption says which. A
+-- random split would leave you guessing which rows a one-way follower is
+-- supposed to be missing.
+--
 -- image_path points at a well-formed but non-existent object:
 -- posts_image_path_owned only checks the path's *shape*, not that anything
 -- is actually in storage. FeedService.signedURLs already handles a path
@@ -93,11 +99,13 @@ from new_users;
 -- feed's placeholder rather than failing the query. Exercising the graph
 -- and visibility logic needs real rows, not real photos; upload through the
 -- app on top of this seed data if you also want images that render.
-insert into public.posts (user_id, image_path, caption, created_at)
+insert into public.posts (user_id, image_path, caption, visibility, created_at)
 select
     pr.id,
     pr.id::text || '/' || gen_random_uuid()::text || '.jpg',
-    'Seed post ' || n || ' from ' || pr.username,
+    'Seed post ' || n || ' from ' || pr.username
+        || case when n = 3 then ' (friends only)' else ' (followers)' end,
+    (case when n = 3 then 'mutuals' else 'followers' end)::public.post_visibility,
     now() - (random() * interval '14 days')
 from public.profiles pr
 cross join generate_series(1, 3) as n
@@ -126,11 +134,3 @@ insert into public.follows (follower_id, followee_id) values
 -- -----------------------------------------------------------------------
 -- insert into public.blocks (blocker_id, blocked_id) values
 --     ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005'); -- dave blocks erin
-
--- -----------------------------------------------------------------------
--- Visibility mix — blocked on SOL-29 (posts.visibility column, Milestone 7)
--- -----------------------------------------------------------------------
--- Once the column exists, split the seed posts across both tiers instead of
--- leaving them all on the default:
--- update public.posts set visibility = case when random() < 0.5 then 'followers' else 'mutuals' end
--- where user_id in (select id from auth.users where email like '%@seed.candid.test');
