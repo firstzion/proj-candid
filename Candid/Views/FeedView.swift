@@ -1,76 +1,89 @@
 import SwiftUI
 
-/// Temporary debug view for `FeedService` (SOL-13) — enough to see the query,
-/// join, and pagination working, with nothing styled. SOL-14 replaces this
-/// with the real feed UI.
 struct FeedView: View {
-    @State private var posts: [FeedPost] = []
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var reachedEnd = false
+    @State private var feedState: FeedState = .loading
+
+    private enum FeedState {
+        case loading
+        case loaded([FeedPost])
+        case failed(String)
+    }
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(posts) { post in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(post.username).font(.headline)
-                        if let caption = post.caption {
-                            Text(caption)
-                        }
-                        Text(post.createdAt, format: .dateTime)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        AsyncImage(url: post.imageURL) { image in
-                            image.resizable().scaledToFit()
-                        } placeholder: {
-                            ProgressView()
-                        }
-                        .frame(maxHeight: 160)
+            Group {
+                switch feedState {
+                case .loading:
+                    ProgressView()
+
+                case .loaded(let posts) where posts.isEmpty:
+                    ContentUnavailableView("No Posts Yet", systemImage: "photo.on.rectangle.angled")
+
+                case .loaded(let posts):
+                    List(posts) { post in
+                        PostRow(post: post)
+                    }
+                    .listStyle(.plain)
+
+                case .failed(let message):
+                    ContentUnavailableView {
+                        Label("Couldn't Load Feed", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(message)
+                    } actions: {
+                        Button("Try Again") { Task { await load() } }
                     }
                 }
-
-                if let errorMessage {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
-
-                if !reachedEnd {
-                    Button("Load More") {
-                        Task { await loadMore() }
-                    }
-                    .disabled(isLoading)
-                }
             }
-            .navigationTitle("Feed (debug)")
-            .task {
-                guard posts.isEmpty else { return }
-                await loadMore()
-            }
-            .refreshable {
-                posts = []
-                reachedEnd = false
-                await loadMore()
-            }
+            .navigationTitle("Feed")
+            .task { await load() }
         }
     }
 
-    private func loadMore() async {
-        isLoading = true
-        errorMessage = nil
-
+    private func load() async {
+        feedState = .loading
         do {
-            // Small limit so a couple of taps on "Load More" exercises
-            // pagination by hand.
-            let page = try await FeedService().fetchPosts(before: posts.last?.cursor, limit: 3)
-            posts.append(contentsOf: page)
-            if page.isEmpty {
-                reachedEnd = true
-            }
+            feedState = .loaded(try await FeedService().fetchPosts())
         } catch {
-            errorMessage = error.localizedDescription
+            feedState = .failed(error.localizedDescription)
         }
+    }
+}
 
-        isLoading = false
+private struct PostRow: View {
+    let post: FeedPost
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(post.username)
+                .font(.headline)
+
+            AsyncImage(url: post.imageURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                case .failure:
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                case .empty:
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                @unknown default:
+                    EmptyView()
+                }
+            }
+
+            if let caption = post.caption {
+                Text(caption)
+            }
+
+            Text(post.createdAt, style: .relative)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 }
 
