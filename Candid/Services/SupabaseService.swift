@@ -50,7 +50,22 @@ final class SupabaseService {
             throw SupabaseConfigurationError.malformedHost(host)
         }
 
-        return SupabaseClient(supabaseURL: url, supabaseKey: key)
+        // Report the Keychain session as the initial auth event even when its
+        // access token has expired, and let the SDK refresh it in the
+        // background. The SDK's legacy default (`false`) attempts the refresh
+        // *first* and reports no session at all if that fails — so someone
+        // launching offline, or on a slow network, with a token more than an
+        // hour old was shown the Log In screen while still signed in, then
+        // bounced into the app once the auto-refresh got through. The SDK
+        // flags the legacy behaviour as a runtime issue and will flip the
+        // default in its next major release.
+        return SupabaseClient(
+            supabaseURL: url,
+            supabaseKey: key,
+            options: SupabaseClientOptions(
+                auth: .init(emitLocalSessionAsInitialSession: true)
+            )
+        )
     }
 
     private static func requiredString(forKey key: String, in bundle: Bundle) throws -> String {

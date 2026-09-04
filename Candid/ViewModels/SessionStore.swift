@@ -9,8 +9,18 @@ import Supabase
 /// reports so SwiftUI can react to it.
 ///
 /// `authStateChanges` emits `.initialSession` as soon as it is subscribed to,
-/// carrying whatever was restored from the Keychain. That first event is what
-/// decides, on launch, between the auth screens and the main tabs.
+/// carrying whatever was restored from the Keychain — even a session whose
+/// access token has already expired; `SupabaseService` opts into that with
+/// `emitLocalSessionAsInitialSession`. That first event is what decides, on
+/// launch, between the auth screens and the main tabs.
+///
+/// An expired restored session still counts as signed in. The SDK refreshes
+/// it in the background, and every request that goes through `auth.session`
+/// refreshes first anyway. A refresh the server definitively rejects — a
+/// revoked or already-rotated refresh token — makes the SDK clear the Keychain
+/// and emit `.signedOut`, which lands here like any other sign-out. Only a nil
+/// session means nobody is signed in; a mere network failure never produces
+/// one.
 @MainActor
 final class SessionStore: ObservableObject {
     enum State: Equatable {

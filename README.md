@@ -21,8 +21,14 @@ The app root is session-gated: `RootView` shows the Log In screen when signed ou
 and the main tabs when signed in, driven by `SessionStore` mirroring the SDK's
 `authStateChanges`. Sessions are persisted and refreshed by the Supabase SDK
 itself — `defaultLocalStorage` is `KeychainLocalStorage` and `autoRefreshToken`
-defaults to true — so there is no custom persistence here. The Profile tab shows
-the signed-in user's username from their `profiles` row, plus Log Out.
+defaults to true — so there is no custom persistence here. The one auth option
+the app sets is `emitLocalSessionAsInitialSession`, so the Keychain session is
+reported at launch even when its access token has expired and the SDK refreshes
+it in the background. The SDK's legacy default refreshes *first* and reports no
+session at all if that fails, which sent a still-signed-in user launching
+offline to the Log In screen — and then bounced them back into the app when the
+auto-refresh eventually got through. The Profile tab shows the signed-in user's
+username from their `profiles` row, plus Log Out.
 
 ## Requirements
 
