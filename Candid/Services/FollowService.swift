@@ -4,7 +4,7 @@ import Supabase
 /// Errors surfaced by `FollowService`, worded for the button that caused them.
 enum FollowError: LocalizedError {
     case notSignedIn
-    case cannotFollowSelf
+    case cannotTargetSelf
     case accountMissing
     case notPermitted
     case other(String)
@@ -13,8 +13,10 @@ enum FollowError: LocalizedError {
         switch self {
         case .notSignedIn:
             return "You're not signed in."
-        case .cannotFollowSelf:
-            return "You can't follow yourself."
+        case .cannotTargetSelf:
+            // The UI never offers either action on your own profile; this is
+            // the wording for a request that arrived anyway.
+            return "You can't follow or block yourself."
         case .accountMissing:
             return "That account no longer exists."
         case .notPermitted:
@@ -31,7 +33,13 @@ enum FollowError: LocalizedError {
 
 /// The follow graph from the signed-in user's point of view: one directional
 /// edge per `follows` row, with "friends" derived by the `mutuals` view rather
-/// than stored anywhere. Service layer only — the UI arrives with SOL-32.
+/// than stored anywhere, and blocks — the one relationship that overrides the
+/// graph — in `blocks`. Service layer only; the UI arrives with SOL-32.
+///
+/// Nothing here decides what a block *means*. The database severs follows
+/// when a block is made, refuses a new follow across one, and (once the
+/// `can_view_post()` rule lands) hides each side from the other; this type
+/// only writes the row and reads back the caller's own.
 struct FollowService {
     let client: SupabaseClient
 
@@ -122,24 +130,93 @@ struct FollowService {
         }
     }
 
-    /// Both directions between the signed-in user and `userID` in one
-    /// request — at most two rows — so a profile can show "following",
-    /// "follows you" or "friends" without asking twice. Asking about yourself
-    /// is answered without a request: no edge can exist in either direction.
+    /// Blocks `userID`.
+    ///
+    /// The database does the rest, in the same transaction: a trigger severs
+    /// the follow in both directions, and the `follows` insert policy refuses
+    /// a new edge across the block in either direction until it is lifted. So
+    /// nothing here unfollows first, and there is no client-side rule to keep
+    /// in step. Blocking someone already blocked is not an error, for the same
+    /// reason a duplicate follow isn't.
+    ///
+    /// Silent by design: `blocks` is readable only by the person who made the
+    /// block, so nothing the other side can query changes.
+    func block(_ userID: UUID) async throws {
+        let me = try await sessionUserID()
+        do {
+            try await client
+                .from("blocks")
+                .insert(NewBlock(blockerID: me, blockedID: userID))
+                .execute()
+        } catch {
+            if Self.isDuplicateEdge(error) { return }
+            throw Self.mapFollowError(error)
+        }
+    }
+
+    /// Lifts a block. Restores nothing: the follow edges the block severed
+    /// stay severed, and either side may follow again from scratch. Idempotent
+    /// for the same reason `unfollow` is.
+    func unblock(_ userID: UUID) async throws {
+        let me = try await sessionUserID()
+        do {
+            try await client
+                .from("blocks")
+                .delete()
+                .eq("blocker_id", value: me)
+                .eq("blocked_id", value: userID)
+                .execute()
+        } catch {
+            throw Self.mapFollowError(error)
+        }
+    }
+
+    /// Whether the signed-in user has blocked `userID`. Only this direction
+    /// can be asked: whether *they* have blocked *you* is deliberately not
+    /// readable.
+    func isBlocking(_ userID: UUID) async throws -> Bool {
+        let me = try await sessionUserID()
+        do {
+            let rows = try await ownBlock(from: me, of: userID)
+            return !rows.isEmpty
+        } catch {
+            throw Self.mapFollowError(error)
+        }
+    }
+
+    /// Both follow directions between the signed-in user and `userID` in one
+    /// request — at most two rows — plus the caller's own block of them, so a
+    /// profile can show "following", "follows you", "friends" or "blocked"
+    /// without asking again. Asking about yourself is answered without a
+    /// request: no edge or block can exist in either direction.
     func relationship(with userID: UUID) async throws -> Relationship {
         let me = try await sessionUserID()
         guard userID != me else { return .unconnected }
         do {
-            let rows: [FollowEdge] = try await client
+            let edges: [FollowEdge] = try await client
                 .from("follows")
                 .select("follower_id, followee_id")
                 .or(Self.eitherDirectionFilter(me: me, other: userID))
                 .execute()
                 .value
-            return Self.relationship(me: me, other: userID, edges: rows)
+            let blocks = try await ownBlock(from: me, of: userID)
+            return Self.relationship(me: me, other: userID, edges: edges, blocking: !blocks.isEmpty)
         } catch {
             throw Self.mapFollowError(error)
         }
+    }
+
+    /// The caller's own `blocks` row for `userID`, if any — the select policy
+    /// would hide anyone else's regardless of filter.
+    private func ownBlock(from me: UUID, of userID: UUID) async throws -> [BlockRow] {
+        try await client
+            .from("blocks")
+            .select("blocked_id")
+            .eq("blocker_id", value: me)
+            .eq("blocked_id", value: userID)
+            .limit(1)
+            .execute()
+            .value
     }
 
     /// A PostgREST `or` filter matching the edge in either direction between
@@ -150,11 +227,12 @@ struct FollowService {
     }
 
     /// Derives the relationship from whatever edges came back. Pure, so the
-    /// four possible outcomes are pinned by tests without a request.
-    static func relationship(me: UUID, other: UUID, edges: [FollowEdge]) -> Relationship {
+    /// possible outcomes are pinned by tests without a request.
+    static func relationship(me: UUID, other: UUID, edges: [FollowEdge], blocking: Bool = false) -> Relationship {
         Relationship(
             following: edges.contains { $0.followerID == me && $0.followeeID == other },
-            followedBy: edges.contains { $0.followerID == other && $0.followeeID == me }
+            followedBy: edges.contains { $0.followerID == other && $0.followeeID == me },
+            blocking: blocking
         )
     }
 
@@ -166,8 +244,8 @@ struct FollowService {
         }
     }
 
-    /// Postgres `unique_violation` — the composite primary key refusing a
-    /// second identical edge.
+    /// Postgres `unique_violation` — a composite primary key refusing a second
+    /// identical edge or block.
     static func isDuplicateEdge(_ error: Error) -> Bool {
         (error as? PostgrestError)?.code == "23505"
     }
@@ -188,14 +266,16 @@ struct FollowService {
 
         switch postgrestError.code ?? "" {
         case "23514":
-            // check_violation. follows_no_self_follow is the table's only
-            // CHECK constraint, so this can mean one thing.
-            return .cannotFollowSelf
+            // check_violation. follows_no_self_follow and blocks_no_self_block
+            // are the only CHECK constraints on the graph tables, and both
+            // say the same thing.
+            return .cannotTargetSelf
         case "23503":
-            // foreign_key_violation: the followee's profile is gone.
+            // foreign_key_violation: the other account's profile is gone.
             return .accountMissing
         case "42501":
-            // insufficient_privilege is how an RLS refusal arrives.
+            // insufficient_privilege is how an RLS refusal arrives — since
+            // SOL-31, including a follow attempted across a block.
             return .notPermitted
         default:
             if postgrestError.message.lowercased().contains("row-level security") {
@@ -238,5 +318,25 @@ private struct MutualRow: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case mutualID = "mutual_id"
+    }
+}
+
+/// The `blocks` insert payload: the two columns the client sets.
+private struct NewBlock: Encodable {
+    let blockerID: UUID
+    let blockedID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case blockerID = "blocker_id"
+        case blockedID = "blocked_id"
+    }
+}
+
+/// One `blocks` row, of which only presence matters.
+private struct BlockRow: Decodable {
+    let blockedID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case blockedID = "blocked_id"
     }
 }

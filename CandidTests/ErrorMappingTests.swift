@@ -373,16 +373,19 @@ struct FeedErrorMappingTests {
 
 @Suite("Follow error mapping")
 struct FollowErrorMappingTests {
-    /// follows_no_self_follow is the table's only CHECK constraint, so a
-    /// check_violation can mean exactly one thing.
-    @Test("a self-follow rejected by the CHECK constraint is named as such")
-    func selfFollow() {
-        let mapped = FollowService.mapFollowError(
-            PostgrestError(code: "23514", message: #"new row for relation "follows" violates check constraint "follows_no_self_follow""#)
-        )
-        guard case .cannotFollowSelf = mapped else {
-            Issue.record("expected .cannotFollowSelf, got \(mapped)")
-            return
+    /// follows_no_self_follow and blocks_no_self_block are the only CHECK
+    /// constraints on the graph tables, and both say the same thing.
+    @Test("a self-follow or self-block rejected by a CHECK constraint is named as such")
+    func targetingSelf() {
+        for message in [
+            #"new row for relation "follows" violates check constraint "follows_no_self_follow""#,
+            #"new row for relation "blocks" violates check constraint "blocks_no_self_block""#,
+        ] {
+            let mapped = FollowService.mapFollowError(PostgrestError(code: "23514", message: message))
+            guard case .cannotTargetSelf = mapped else {
+                Issue.record("expected .cannotTargetSelf for \(message), got \(mapped)")
+                return
+            }
         }
     }
 

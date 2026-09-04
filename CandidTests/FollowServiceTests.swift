@@ -123,7 +123,7 @@ struct FollowServiceTests {
         #expect(whenNoPair == false)
     }
 
-    @Test("relationship fetches both directions in one request and derives the state")
+    @Test("relationship fetches both follow directions in one request and derives the state")
     func relationshipDerivesState() async throws {
         StubURLProtocol.reset()
         defer { StubURLProtocol.reset() }
@@ -138,19 +138,128 @@ struct FollowServiceTests {
 
         for (edges, expected) in cases {
             let body = Self.rowsJSON(edges)
-            StubURLProtocol.setHandler { _ in .init(body: body) }
+            StubURLProtocol.setHandler { request in
+                // The follows request carries the edges; the blocks request
+                // finds nothing.
+                request.url?.path == "/rest/v1/blocks" ? .init(body: Data("[]".utf8)) : .init(body: body)
+            }
             let relationship = try await service.relationship(with: Self.other)
             #expect(relationship == expected, "edges: \(edges)")
         }
 
-        #expect(StubURLProtocol.requests.count == cases.count)
+        // Exactly two requests per call: follows, then the caller's own block.
+        #expect(StubURLProtocol.requests.count == cases.count * 2)
 
-        // One request, both directions, nothing else.
-        let request = try #require(StubURLProtocol.requests.last)
-        #expect(request.url?.path == "/rest/v1/follows")
+        // The follows request asks for both directions at once, nothing else.
+        let request = try #require(StubURLProtocol.requests.last { $0.url?.path == "/rest/v1/follows" })
         let filter = try #require(Self.queryItems(of: request)["or"])
         #expect(filter.contains("and(follower_id.eq.\(Self.me.uuidString),followee_id.eq.\(Self.other.uuidString))"))
         #expect(filter.contains("and(follower_id.eq.\(Self.other.uuidString),followee_id.eq.\(Self.me.uuidString))"))
+    }
+
+    @Test("relationship reads the caller's own block, and only that direction")
+    func relationshipReadsOwnBlock() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+
+        StubURLProtocol.setHandler { request in
+            request.url?.path == "/rest/v1/blocks"
+                ? .init(body: Data(#"[{"blocked_id":"\#(Self.other.uuidString.lowercased())"}]"#.utf8))
+                : .init(body: Data("[]".utf8))
+        }
+        let relationship = try await Self.makeService().relationship(with: Self.other)
+        #expect(relationship == Relationship(following: false, followedBy: false, blocking: true))
+
+        // The blocks request can only ever ask about the caller's own row;
+        // the select policy would hide anyone else's regardless.
+        let request = try #require(StubURLProtocol.requests.last { $0.url?.path == "/rest/v1/blocks" })
+        let query = Self.queryItems(of: request)
+        #expect(query["blocker_id"] == "eq.\(Self.me.uuidString)")
+        #expect(query["blocked_id"] == "eq.\(Self.other.uuidString)")
+        #expect(query["limit"] == "1")
+    }
+
+    @Test("block inserts the row with the caller as blocker")
+    func blockInsertsRow() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in .init(statusCode: 201, body: Data()) }
+
+        try await Self.makeService().block(Self.other)
+
+        let request = try #require(StubURLProtocol.requests.last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/rest/v1/blocks")
+
+        struct Body: Decodable {
+            let blockerID: UUID
+            let blockedID: UUID
+            enum CodingKeys: String, CodingKey {
+                case blockerID = "blocker_id"
+                case blockedID = "blocked_id"
+            }
+        }
+        let body = try JSONDecoder().decode(Body.self, from: try #require(request.drainedBody))
+        #expect(body.blockerID == Self.me)
+        #expect(body.blockedID == Self.other)
+
+        // Nothing else is sent: severing the follows is the database's job.
+        #expect(StubURLProtocol.requests.count == 1)
+    }
+
+    @Test("blocking someone already blocked is not an error")
+    func duplicateBlockIsSuccess() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in
+            .init(
+                statusCode: 409,
+                body: Data(#"{"code":"23505","message":"duplicate key value violates unique constraint \"blocks_pkey\""}"#.utf8)
+            )
+        }
+
+        try await Self.makeService().block(Self.other)
+    }
+
+    @Test("unblock deletes only the caller's own block of that user")
+    func unblockDeletesOwnBlock() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in .init(statusCode: 204, body: Data()) }
+
+        try await Self.makeService().unblock(Self.other)
+
+        let request = try #require(StubURLProtocol.requests.last)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path == "/rest/v1/blocks")
+        let query = Self.queryItems(of: request)
+        #expect(query["blocker_id"] == "eq.\(Self.me.uuidString)")
+        #expect(query["blocked_id"] == "eq.\(Self.other.uuidString)")
+        // And nothing touches follows: unblocking restores no edges.
+        #expect(StubURLProtocol.requests.count == 1)
+    }
+
+    @Test("isBlocking reads the caller's own block row and its presence")
+    func isBlocking() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let service = Self.makeService()
+
+        StubURLProtocol.setHandler { _ in
+            .init(body: Data(#"[{"blocked_id":"\#(Self.other.uuidString.lowercased())"}]"#.utf8))
+        }
+        let whenBlocked = try await service.isBlocking(Self.other)
+        #expect(whenBlocked == true)
+
+        let request = try #require(StubURLProtocol.requests.last)
+        #expect(request.url?.path == "/rest/v1/blocks")
+        let query = Self.queryItems(of: request)
+        #expect(query["blocker_id"] == "eq.\(Self.me.uuidString)")
+        #expect(query["blocked_id"] == "eq.\(Self.other.uuidString)")
+
+        StubURLProtocol.setHandler { _ in .init(body: Data("[]".utf8)) }
+        let whenNotBlocked = try await service.isBlocking(Self.other)
+        #expect(whenNotBlocked == false)
     }
 
     /// No edge can exist between a user and themselves (the table's CHECK
@@ -179,6 +288,8 @@ struct FollowServiceTests {
         #expect(FollowService.relationship(me: Self.me, other: Self.other, edges: [otherToMe]).followedBy)
         #expect(!FollowService.relationship(me: Self.me, other: Self.other, edges: [otherToMe]).following)
         #expect(FollowService.relationship(me: Self.me, other: Self.other, edges: [meToOther, otherToMe]).isMutual)
+        #expect(FollowService.relationship(me: Self.me, other: Self.other, edges: [], blocking: true).blocking)
+        #expect(!FollowService.relationship(me: Self.me, other: Self.other, edges: [meToOther]).blocking)
     }
 
     // MARK: - Fixtures

@@ -15,9 +15,11 @@ end to end against the hosted backend. Also done: a full code-review pass
 CI, this README). In flight: the social graph and visibility model that will
 make the feed actually reflect who you follow, rather than showing every post
 to every signed-in user. The graph itself is in — the `follows` table, the
-derived `mutuals` view and `FollowService` — and so is per-post visibility,
-chosen at posting time and fixed from then on. The authorization rule that
-makes the feed honour both, blocking, and the follow UI are still to come.
+derived `mutuals` view and `FollowService` — and so are per-post visibility,
+chosen at posting time and fixed from then on, and blocking's data model: a
+block severs the follow both ways and refuses a new one, all in the database.
+The authorization rule that makes the feed honour all of it, and the follow
+and block UI, are still to come.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -190,11 +192,13 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | `profiles` | `id` (PK → `auth.users`), `username` (unique, `^[a-z0-9_]{3,30}$`), `created_at` |
 | `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable, ≤ 2,200 characters), `visibility` (`followers` \| `mutuals`, default `followers`, immutable), `created_at` |
 | `follows` | `follower_id` (→ `profiles`), `followee_id` (→ `profiles`), `created_at`; PK (`follower_id`, `followee_id`), CHECK `follower_id <> followee_id` |
+| `blocks` | `blocker_id` (→ `profiles`), `blocked_id` (→ `profiles`), `created_at`; PK (`blocker_id`, `blocked_id`), CHECK `blocker_id <> blocked_id` |
 
 A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
 taking `username` from the sign-up metadata and falling back to a generated
 placeholder (`user_` plus 25 hex characters of the user's id, to fit the length
-limit). Deleting an auth user cascades to their profile, posts and follow edges.
+limit). Deleting an auth user cascades to their profile, posts, follow edges
+and blocks, in both directions.
 
 `follows` is the social graph: one row per directional edge, where `(a, b)`
 means a follows b. Following is open — anyone can follow anyone, with no
@@ -229,6 +233,34 @@ nothing a viewer can see; the feed marks `mutuals` posts "Friends only" so you
 can tell which audience a photo went to, and the app mirrors the enum in
 `PostVisibility`, whose raw values are the Postgres labels.
 
+`blocks` is the one relationship that overrides the graph: `(a, b)` means a
+has blocked b. Everything a block does happens in the database, so no query
+has to remember to check. An `after insert` trigger severs the follow in both
+directions in the same transaction — a block that left the follow intact
+would be a bug waiting to surface — and the `follows` insert policy refuses a
+new edge across a block in either direction for as long as it stands. Hiding
+each side's posts and profile from the other arrives with the
+`can_view_post()` rule (SOL-30), which is written block-aware from the start.
+Unblocking deletes the row and restores nothing: the severed follows stay
+severed, and either side may follow again from scratch. Blocking is silent.
+The table is readable only by the person who made the block, and a refused
+follow reaches the blocked person as an ordinary RLS error, which
+`FollowService` words as "Couldn't follow this account right now" — never
+why. `FollowService.block`, `unblock`, `isBlocking` and `relationship(with:)`
+(which now reports `blocking`) are the whole client surface; there is no
+block UI yet.
+
+The helper the policies call, `private.is_blocked_either_way(a, b)`, lives in
+a `private` schema that PostgREST does not expose. Any function in `public`
+that `authenticated` may execute is also an RPC endpoint, and a policy needs
+`authenticated` to execute this one — so in `public`, any signed-in user could
+ask "has alice blocked bob?" in a single request, which is exactly what silent
+blocking forbids. A function in `private` is callable from a policy and from
+nowhere else; `authenticated` has `usage` on the schema and `execute` on the
+function, `anon` has neither. The `can_view_post()` family will live there
+too. Trigger functions stay in `public` with `execute` revoked, as
+`handle_new_user` does — a trigger needs no callers.
+
 Usernames are stored lowercase. The trigger lowercases and trims what the
 metadata carries, and a CHECK constraint enforces `^[a-z0-9_]{3,30}$`; because
 only lowercase is ever stored, the plain unique constraint is case-insensitive
@@ -248,7 +280,9 @@ the sanitised database error is now reported as a failed creation whose username
 *may* have been taken, rather than asserted as taken — that assertion used to
 turn every server-side failure into a report of a user mistake.
 
-RLS is enabled on all three tables. Reads are open to any authenticated user.
+RLS is enabled on all four tables. Reads of `profiles`, `posts` and `follows`
+are open to any authenticated user; `blocks` is readable, insertable and
+deletable only by the blocker, with no policy at all for the blocked side.
 On `profiles`, inserts and updates are restricted to the caller's own rows; on
 `posts`, inserts are, and there is no update policy at all, since posts are
 immutable (see visibility above). Neither has a delete policy, so a client can
@@ -258,7 +292,8 @@ row, cascading to their `profiles` row, every `posts` row they own and every
 single post without deleting the whole account isn't possible yet. On
 `follows`, a user may insert and delete only edges where they are the
 follower — you can unfollow someone, you cannot remove one of your followers —
-and there is no update policy, since nothing on an edge can change. **The
+the insert is refused across a block in either direction, and there is no
+update policy, since nothing on an edge can change. **The
 `profiles` and `posts` read policies are dev-only** — Candid is meant to show
 you your friends' posts, so those reads narrow to the follow graph when the
 `can_view_post()` rule lands (SOL-30). Follows themselves stay readable by
@@ -409,10 +444,9 @@ connected to nobody — the shapes the visibility rules need to be checked
 against. Visibility is seeded deterministically: each account's third post is
 friends-only and the other two are followers-only, with the tier named in the
 caption, so a tester can tell which rows a one-way follower is supposed to be
-missing. Blocking belongs here as well, but `blocks`
-([SOL-31](https://linear.app/cspurlock/issue/SOL-31/blocking)) doesn't exist
-yet; that section is written out and commented, ready to uncomment once the
-table lands.
+missing. One block is seeded: dave blocks erin, two accounts with no other tie,
+so the visibility rule's "blocked in either direction" check can be tested
+from both sides without the block having disturbed the follow graph.
 
 ## Conventions
 
