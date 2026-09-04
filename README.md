@@ -149,6 +149,13 @@ so deletes are denied outright. **These read policies are dev-only** — Candid 
 meant to show you your friends' posts, so reads will need to narrow to a friend
 graph once one exists. The migration says so at the top.
 
+`posts.image_path` is CHECK-constrained to the shape `{user_id}/{uuid}.jpg` with
+the first segment equal to the row's own `user_id`, so a post can only ever
+reference an image in its author's storage folder — the row-level counterpart
+of the upload policy under Storage. Without it, any authenticated user could
+insert a row pointing at someone else's photo (the publishable key plus their
+own JWT is all it takes) and the feed would show that photo under their name.
+
 ### Storage
 
 Post images live in the **private** `post-images` bucket (5 MB cap, `image/jpeg`
