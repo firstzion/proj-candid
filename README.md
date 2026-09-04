@@ -338,7 +338,7 @@ Run it with database-owner privileges — the publishable key the app uses
 cannot do this, by design:
 
 ```bash
-supabase db execute --linked -f supabase/seed.sql
+supabase db query --linked -f supabase/seed.sql
 ```
 
 or paste the file into the Dashboard's SQL Editor. It's idempotent: every run

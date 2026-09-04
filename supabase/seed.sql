@@ -16,7 +16,7 @@
 --
 -- Run it:
 --   * Dashboard: SQL Editor → paste this file → Run
---   * CLI:       supabase db execute --linked -f supabase/seed.sql
+--   * CLI:       supabase db query --linked -f supabase/seed.sql
 --                (or: psql "$(supabase db url --linked)" -f supabase/seed.sql)
 --
 -- All ten accounts share one password: CandidSeed123!  (14 characters,
