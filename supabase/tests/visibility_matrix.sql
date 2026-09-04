@@ -127,14 +127,16 @@ begin
     select count(*) into n from public.posts where user_id = dave;
     assert n = 0, format('case 7b: erin (blocked) must see none of dave''s posts, sees %s', n);
 
-    -- 11: a blocked pair cannot read each other's profile row; others can.
+    -- 11: the blocked person cannot read the blocker's profile row; the
+    -- blocker can still read theirs — that is where Unblock lives; everyone
+    -- else is unaffected.
     select count(*) into n from public.profiles where id = dave;
-    assert n = 0, format('case 11: erin must not read dave''s profile, reads %s', n);
+    assert n = 0, format('case 11: erin (blocked) must not read dave''s profile, reads %s', n);
     select count(*) into n from public.profiles where id = erin;
     assert n = 1, 'case 11: erin must still read her own profile';
     perform pg_temp.act_as(dave);
     select count(*) into n from public.profiles where id = erin;
-    assert n = 0, format('case 11: dave must not read erin''s profile, reads %s', n);
+    assert n = 1, format('case 11: dave (blocker) must still read erin''s profile, reads %s', n);
     perform pg_temp.act_as(carol);
     select count(*) into n from public.profiles where id = alice;
     assert n = 1, 'case 11: carol must read alice''s profile';
@@ -193,6 +195,8 @@ begin
         'exposure: anon can execute can_view_post (by id)';
     assert not has_function_privilege('anon', 'private.can_view_image(uuid,text)', 'execute'),
         'exposure: anon can execute can_view_image';
+    assert not has_function_privilege('anon', 'private.is_blocked_by(uuid,uuid)', 'execute'),
+        'exposure: anon can execute is_blocked_by';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
 end;
