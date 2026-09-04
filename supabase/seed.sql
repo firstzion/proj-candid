@@ -26,15 +26,15 @@
 -- -----------------------------------------------------------------------
 -- Reset: drop any previous run's seed data before recreating it
 -- -----------------------------------------------------------------------
--- auth.users -> profiles -> posts all cascade on delete (initial schema),
--- so this one statement is the whole reset.
+-- auth.users -> profiles -> posts and follows all cascade on delete, so this
+-- one statement is the whole reset.
 delete from auth.users where email like '%@seed.candid.test';
 
 -- -----------------------------------------------------------------------
 -- Accounts
 -- -----------------------------------------------------------------------
--- Fixed ids so a future follow-graph section (see bottom) can reference
--- these accounts by name instead of re-querying them.
+-- Fixed ids so the follow-graph section (see bottom) can reference these
+-- accounts by name instead of re-querying them.
 with seed_users (id, username) as (
     values
         ('00000000-0000-0000-0000-000000000001'::uuid, 'alice'),
@@ -104,22 +104,22 @@ cross join generate_series(1, 3) as n
 where pr.id in (select id from auth.users where email like '%@seed.candid.test');
 
 -- -----------------------------------------------------------------------
--- Follow graph — blocked on SOL-27 (follows table, Milestone 7)
+-- Follow graph (SOL-27)
 -- -----------------------------------------------------------------------
--- Uncomment once `follows` exists. Shapes deliberately covered:
---   * mutual pair:    alice <-> bob
---   * one-way follow: carol -> alice (carol follows alice; not returned)
+-- Shapes deliberately covered:
+--   * mutual pair:    alice <-> bob        (the only rows `mutuals` returns)
+--   * one-way follow: carol -> alice       (carol follows alice; not returned)
 --   * unconnected:    judy follows no one and is followed by no one
 -- dave..ivan get a light scattering of one-way follows so the graph isn't
--- just one clique.
---
--- insert into public.follows (follower_id, followee_id) values
---     ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002'), -- alice -> bob
---     ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001'), -- bob -> alice (completes the mutual)
---     ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001'), -- carol -> alice (one-way)
---     ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000006'), -- dave -> frank
---     ('00000000-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000008'), -- grace -> heidi
---     ('00000000-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000001'); -- ivan -> alice
+-- just one clique. The profiles rows these reference exist by now — the
+-- on_auth_user_created trigger wrote them during the Accounts step above.
+insert into public.follows (follower_id, followee_id) values
+    ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002'), -- alice -> bob
+    ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001'), -- bob -> alice (completes the mutual)
+    ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001'), -- carol -> alice (one-way)
+    ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000006'), -- dave -> frank
+    ('00000000-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000008'), -- grace -> heidi
+    ('00000000-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000001'); -- ivan -> alice
 
 -- -----------------------------------------------------------------------
 -- Blocking — blocked on SOL-31 (Milestone 7)
