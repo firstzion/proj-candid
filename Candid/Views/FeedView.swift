@@ -1,10 +1,22 @@
 import SwiftUI
 
 struct FeedView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var posts: [FeedPost] = []
     @State private var phase: Phase = .loading
     @State private var isLoadingMore = false
     @State private var reachedEnd = false
+
+    /// When the posts on screen were fetched. Their signed image URLs stop
+    /// resolving `StorageService.signedURLLifetime` after this — see `isStale`.
+    @State private var loadedAt: Date?
+
+    /// Bumped by every successful refresh. A `loadMore` that was in flight
+    /// across a refresh checks it on return and drops its page: that page was
+    /// paginated from a cursor that is no longer in the list, and appending
+    /// it would leave a hole between the fresh head and the old tail.
+    @State private var generation = 0
 
     private enum Phase {
         case loading
@@ -15,6 +27,12 @@ struct FeedView: View {
     /// Deliberately small so pagination is easy to trigger and verify by
     /// hand, rather than matching `FeedService.defaultLimit`.
     private static let pageSize = 8
+
+    /// How old the feed may get before it refreshes itself. Half the signed
+    /// URL lifetime, so images are swapped for fresh URLs well before the
+    /// current ones expire — rather than every photo on screen turning into a
+    /// placeholder at the hour mark.
+    private static let staleAfter = TimeInterval(StorageService.signedURLLifetime) / 2
 
     var body: some View {
         NavigationStack {
@@ -60,19 +78,46 @@ struct FeedView: View {
             }
             .navigationTitle("Feed")
             .task {
-                guard posts.isEmpty else { return }
+                // Runs every time the tab is shown; only fetch when there is
+                // nothing on screen or what's there has gone stale.
+                guard posts.isEmpty || isStale else { return }
                 await refresh()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                // Returning from the background after a long absence is how
+                // the feed usually goes stale — and `.task` does not re-run
+                // for that, only for the tab appearing.
+                guard newPhase == .active, isStale else { return }
+                Task { await refresh() }
             }
         }
     }
 
-    /// Fetches the newest page and merges it in — used for both the initial
-    /// load and pull-to-refresh, which are the same operation: ask for the
-    /// newest posts again and reconcile against what's already on screen.
+    private var isStale: Bool {
+        guard let loadedAt else { return false }
+        return Date().timeIntervalSince(loadedAt) > Self.staleAfter
+    }
+
+    /// Fetches the newest page and replaces the feed with it — the initial
+    /// load, pull-to-refresh, and the automatic refresh of a stale feed are
+    /// all the same operation.
+    ///
+    /// Replacing rather than merging is deliberate, for two reasons. Signed
+    /// image URLs expire, and a merge that kept the existing posts kept their
+    /// dead URLs too, so after an hour every image was a placeholder and
+    /// pulling to refresh could not fix it. And a merge that only prepends
+    /// what's new leaves a hole whenever more than a page of posts arrived
+    /// since the last load: the posts between the new head and the old list
+    /// were never fetched, and `loadMore` only ever paginates from the end.
+    /// Starting over from the newest page has neither problem; older pages
+    /// are re-fetched as the user scrolls.
     private func refresh() async {
         do {
             let page = try await FeedService().fetchPosts(limit: Self.pageSize)
-            merge(page, at: .start)
+            generation += 1
+            posts = page
+            loadedAt = Date()
+            reachedEnd = page.count < Self.pageSize
             phase = .loaded
         } catch {
             // A failed refresh with posts already on screen just leaves them
@@ -88,38 +133,31 @@ struct FeedView: View {
     private func loadMore() async {
         guard !isLoadingMore, !reachedEnd else { return }
         isLoadingMore = true
+        defer { isLoadingMore = false }
 
-        if let page = try? await FeedService().fetchPosts(before: posts.last?.cursor, limit: Self.pageSize) {
-            merge(page, at: .end)
-            if page.count < Self.pageSize {
-                reachedEnd = true
-            }
+        let startedIn = generation
+        guard let page = try? await FeedService().fetchPosts(before: posts.last?.cursor, limit: Self.pageSize) else {
+            // A transient failure here just leaves `reachedEnd` false, so
+            // scrolling back to the last row (or pulling to refresh) tries
+            // again rather than the feed being stuck or erroring out wholesale.
+            return
         }
-        // A transient failure here just leaves `reachedEnd` false, so
-        // scrolling back to the last row (or pulling to refresh) tries
-        // again rather than the feed being stuck or erroring out wholesale.
 
-        isLoadingMore = false
+        // The feed was refreshed underneath this request — see `generation`.
+        guard startedIn == generation else { return }
+
+        append(page)
+        if page.count < Self.pageSize {
+            reachedEnd = true
+        }
     }
 
-    private enum MergePosition {
-        case start
-        case end
-    }
-
-    /// Adds only posts not already on screen, so refreshing or paginating
-    /// never duplicates a row already loaded from an earlier fetch.
-    private func merge(_ page: [FeedPost], at position: MergePosition) {
+    /// Appends only posts not already on screen. Keyset pagination should
+    /// never hand back a row twice, but a duplicate `id` in a `List` is a
+    /// runtime warning and a misrendered row, so the check is cheap insurance.
+    private func append(_ page: [FeedPost]) {
         let existingIDs = Set(posts.map(\.id))
-        let newOnes = page.filter { !existingIDs.contains($0.id) }
-        guard !newOnes.isEmpty else { return }
-
-        switch position {
-        case .start:
-            posts = newOnes + posts
-        case .end:
-            posts += newOnes
-        }
+        posts += page.filter { !existingIDs.contains($0.id) }
     }
 }
 
