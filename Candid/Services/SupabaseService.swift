@@ -69,10 +69,14 @@ final class SupabaseService {
     }
 
     private static func requiredString(forKey key: String, in bundle: Bundle) throws -> String {
-        let value = bundle.object(forInfoDictionaryKey: key) as? String
-        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let value = (bundle.object(forInfoDictionaryKey: key) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, !value.isEmpty else {
             throw SupabaseConfigurationError.missingValue(key: key)
         }
+        // The trimmed value, not the raw one. This used to check the trimmed
+        // string but return the original, so a stray space after the host in
+        // Secrets.xcconfig would have become part of the URL.
         return value
     }
 }

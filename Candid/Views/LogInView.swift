@@ -40,8 +40,10 @@ struct LogInView: View {
         .navigationTitle("Log In")
     }
 
+    /// Trims what `AuthService` trims, so the button and the request agree on
+    /// what counts as blank.
     private var canSubmit: Bool {
-        !email.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
     }
 
     private func submit() async {
