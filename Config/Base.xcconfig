@@ -1,0 +1,16 @@
+// Committed base configuration.
+//
+// Defaults are empty; the gitignored Secrets.xcconfig below overrides them.
+// The include is optional (`#include?`), so the project still opens and builds
+// on a fresh clone before anyone has created Secrets.xcconfig — the app then
+// fails with a clear message at runtime instead of failing to compile.
+
+SUPABASE_API_HOST =
+SUPABASE_PUBLISHABLE_KEY =
+
+#include? "Secrets.xcconfig"
+
+// Surface the values at runtime via a partial Info.plist. Xcode only honours
+// INFOPLIST_KEY_* for keys it already knows about, so custom keys need a real
+// plist file; Xcode still merges its generated entries on top of it.
+INFOPLIST_FILE = Config/Info.plist

@@ -85,6 +85,16 @@ committed template to create it:
 cp Config/Secrets.example.xcconfig Config/Secrets.xcconfig
 ```
 
+The build wires them through in three hops: `Config/Base.xcconfig` optionally
+includes `Secrets.xcconfig`, `Config/Info.plist` substitutes the values into the
+app's Info.plist, and `SupabaseService` reads them back at runtime. The optional
+include (`#include?`) means a fresh clone still builds without the secrets file —
+the app then reports a clear configuration error instead of failing to compile.
+
+Custom keys need that real `Info.plist`: Xcode only honours `INFOPLIST_KEY_*`
+build settings for keys it already knows about, and silently drops unknown ones.
+`GENERATE_INFOPLIST_FILE` stays on, so Xcode merges its usual entries on top.
+
 ### Schema
 
 | Table | Columns |
@@ -123,5 +133,7 @@ supabase link --project-ref ztdggewgqaoaixjhttct
 ## Conventions
 
 - Bundle identifier: `com.firstzion.candid`
+- Dependencies: [supabase-swift](https://github.com/supabase/supabase-swift) via
+  Swift Package Manager, pinned in `Package.resolved` (committed)
 - Swift language version: 5.0
 - UI is intentionally unstyled — visual design arrives in a later ticket.

@@ -21,7 +21,8 @@ DerivedData/
 .build/
 .swiftpm/
 Packages/
-Package.resolved
+# Package.resolved is deliberately committed: this is an application, so exact
+# dependency versions should be pinned and reproducible across clones.
 
 # CocoaPods / Carthage (not used today, ignored pre-emptively)
 Pods/

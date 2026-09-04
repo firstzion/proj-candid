@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Only the custom keys live here. Xcode merges its generated entries
+	     (bundle name, version, scene manifest, and so on) on top, because
+	     GENERATE_INFOPLIST_FILE stays YES. Values are substituted from
+	     Config/Base.xcconfig at build time. -->
+	<key>SUPABASE_API_HOST</key>
+	<string>$(SUPABASE_API_HOST)</string>
+	<key>SUPABASE_PUBLISHABLE_KEY</key>
+	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
+</dict>
+</plist>
