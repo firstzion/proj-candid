@@ -16,10 +16,10 @@ CI, this README). In flight: the social graph and visibility model that will
 make the feed actually reflect who you follow, rather than showing every post
 to every signed-in user. The graph itself is in — the `follows` table, the
 derived `mutuals` view and `FollowService` — and so are per-post visibility,
-chosen at posting time and fixed from then on, and blocking's data model: a
-block severs the follow both ways and refuses a new one, all in the database.
-The authorization rule that makes the feed honour all of it, and the follow
-and block UI, are still to come.
+chosen at posting time and fixed from then on, blocking's data model, and the
+rule that ties them together: `can_view_post()`, one Postgres function that
+every read of a post or a post image goes through. The feed now shows only
+what you are permitted to see. What's left is the follow and block UI.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -31,8 +31,12 @@ Followers and then keeps whatever was chosen last rather than resetting after
 each post: of the two mistakes a reset invites, sending a friends-only photo to
 every follower is the one that can't be taken back.
 
-The Feed tab shows posts newest-first with pull-to-refresh and pagination. It
-refreshes itself when it goes stale (signed image URLs expire) and also right
+The Feed tab shows the posts you are permitted to see — your own, followers
+posts from people you follow, and friends-only posts from people you follow
+who follow you back — newest-first with pull-to-refresh and pagination. The
+app applies no filter of its own; the database decides which rows exist for
+you (see RLS under Schema). The feed refreshes itself when it goes stale
+(signed image URLs expire) and also right
 after you post, so a just-posted photo does not sit unseen for up to half an
 hour. Decoded images are cached by storage path rather than URL, so a refresh
 does not re-download every photo already on screen.
@@ -106,6 +110,22 @@ service under test, since a live session is the one thing the stub cannot
 stand in for. Both suites build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
+The authorization rule itself is tested in SQL, not Swift.
+`supabase/tests/visibility_matrix.sql` impersonates each seeded account the
+way PostgREST does (`request.jwt.claims` plus the `authenticated` role) and
+asserts every case in SOL-30's matrix: both tiers from the author's, a one-way
+follower's, a mutual's and a stranger's seat; both directions of a block, even
+across a follow edge; the profile rows a blocked pair cannot read; the storage
+policy that signing depends on; and mutuality breaking the moment one side
+unfollows. Everything it touches is rolled back. Run it against the hosted
+project after a push and a seed run:
+
+```bash
+supabase db query --linked -f supabase/tests/visibility_matrix.sql
+```
+
+It prints `all checks passed`, or stops at the first failing case.
+
 ## Project layout
 
 ```
@@ -126,7 +146,8 @@ Candid/
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
-supabase/             CLI config and versioned migrations
+supabase/             CLI config, versioned migrations, seed data, and the
+                      visibility matrix test (tests/)
 ```
 
 The project uses Xcode's synchronized folders, which sweep in *every* file under
@@ -280,10 +301,14 @@ the sanitised database error is now reported as a failed creation whose username
 *may* have been taken, rather than asserted as taken — that assertion used to
 turn every server-side failure into a report of a user mistake.
 
-RLS is enabled on all four tables. Reads of `profiles`, `posts` and `follows`
-are open to any authenticated user; `blocks` is readable, insertable and
-deletable only by the blocker, with no policy at all for the blocked side.
-On `profiles`, inserts and updates are restricted to the caller's own rows; on
+RLS is enabled on all four tables, and the read policies are where the
+product's premise lives. A `posts` row is readable only when
+`private.can_view_post(viewer, author, visibility)` says so — see below. A
+`profiles` row is readable unless the two of you have blocked each other.
+`follows` is readable by every authenticated user on purpose: follower counts
+and the relationship line on a profile need edges the caller didn't create.
+`blocks` is readable, insertable and deletable only by the blocker, with no
+policy at all for the blocked side. On `profiles`, inserts and updates are restricted to the caller's own rows; on
 `posts`, inserts are, and there is no update policy at all, since posts are
 immutable (see visibility above). Neither has a delete policy, so a client can
 never delete a row directly — but `delete_own_account()` deletes the caller's own `auth.users`
@@ -293,12 +318,37 @@ single post without deleting the whole account isn't possible yet. On
 `follows`, a user may insert and delete only edges where they are the
 follower — you can unfollow someone, you cannot remove one of your followers —
 the insert is refused across a block in either direction, and there is no
-update policy, since nothing on an edge can change. **The
-`profiles` and `posts` read policies are dev-only** — Candid is meant to show
-you your friends' posts, so those reads narrow to the follow graph when the
-`can_view_post()` rule lands (SOL-30). Follows themselves stay readable by
-every authenticated user on purpose: follower counts and the relationship line
-on a profile need edges the caller didn't create.
+update policy, since nothing on an edge can change.
+
+`can_view_post()` is the one place the visibility rule lives. For a viewer
+looking at a post: the author always; otherwise only if the viewer follows the
+author, neither has blocked the other, and — for a `mutuals` post — the pair
+appears in `mutuals`. It is written once, taking the row's own columns
+(`viewer, author, visibility`) so the `posts` policy evaluates it without
+looking the post up again; the `(viewer, post_id)` form is a thin wrapper for
+callers that only hold an id, and `can_view_image(viewer, object_name)`
+resolves a storage object to its one post (`posts.image_path` is unique) and
+applies the same rule. All three are `security definer` (the rule has to read
+`blocks`, which the blocked side cannot), `stable`, pinned to an empty
+`search_path`, and live in the `private` schema for the reason given above.
+Nothing in Swift decides whether a post is visible: `FeedService.fetchPosts`
+selects with no visibility filter at all, and because RLS filters rows before
+`limit` applies, a page is full whenever more rows exist and the keyset cursor
+works exactly as before. Likes, comments, profile grids and moderation should
+call the same function rather than restate it — a second copy of the rule is
+how a photo leaks. `profiles` narrowed in the same migration as `posts`,
+deliberately: a post is only ever visible together with its author's profile
+row, and narrowing one without the other would leave a feed page embedding a
+hidden author and failing to decode.
+
+The policy is a per-row function call along a `created_at` scan — a few
+primary-key lookups on small tables per row — which is fine at this scale. If a
+large table and a sparse graph ever make the first page slow, the escape hatch
+is a `security_invoker` `feed` view that pre-filters to `user_id in (self,
+followees)` purely as a planner hint, with authorization still in
+`can_view_post()`. The feed's order `(created_at desc, id desc)` is backed by a
+matching composite index, `posts_created_at_id_idx`, which replaced the
+single-column one from the initial schema.
 
 `posts.image_path` is CHECK-constrained to the shape `{user_id}/{uuid}.jpg` with
 the first segment equal to the row's own `user_id`, so a post can only ever
@@ -315,12 +365,22 @@ requires the first path segment to equal the caller's `auth.uid()`, so nobody ca
 write into another user's folder. A delete policy is scoped the same way, and
 further requires the object to be **unreferenced** — no `posts` row may still
 point at it, checked via a `security definer` `image_is_referenced()` helper
-that stays exact even once reads narrow to a friend graph. The client uses it
+that stays exact now that reads are narrowed to the follow graph. The client uses it
 to take back an upload whose post row failed to be written, and account
 deletion uses it too — see below. Deleting a single post isn't possible yet;
 when it lands, it needs the same "row first, then object" ordering account
 deletion already uses. There is no update policy — posts are immutable, and an
 overwrite of a referenced object would silently change a post's photo.
+
+Reads follow the same rule as the feed. The `storage.objects` select policy
+allows the caller's own folder outright — uploads, failed-insert cleanup and
+account deletion all touch objects before or after a post row exists — and
+otherwise asks `private.can_view_image(viewer, name)`, which resolves the
+object to its one post through the unique `posts.image_path` and applies
+`can_view_post()`. Creating a signed URL is a `select` on `storage.objects`,
+so this policy is exactly where "no signed URL for a post you cannot see" is
+enforced; the matrix test checks it from a one-way follower's seat and a
+mutual's.
 
 Because the bucket is private, reads go through short-lived signed URLs rather
 than permanent public ones. The durable identifier for an image is therefore its
@@ -335,7 +395,11 @@ longer than a feed session, while still expiring if one leaks out (a screenshot 
 page, a copied link). An expired URL fails to load like any broken image rather than
 crashing; the feed's own staleness refresh (a post older than half the signed-URL
 lifetime re-triggers a fetch, which re-signs) is what actually recovers it, rather
-than any retry logic in the image view itself.
+than any retry logic in the image view itself. The same lifetime is the window
+after a graph change: a URL minted before an unfollow or a block keeps working
+until it expires, up to an hour. Closing that would mean shorter lifetimes (a
+re-sign round trip more often) or realtime invalidation (a subsystem); neither
+is worth it at this stage.
 
 Uploads are downscaled to a 1600px longest edge and encoded as JPEG at 80%.
 Photos are decoded straight to that size when picked (`ImageDownsampler`, via

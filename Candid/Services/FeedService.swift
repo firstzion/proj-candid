@@ -20,6 +20,13 @@ struct FeedService {
     /// Fetches one page of posts, newest first, each carrying its author's
     /// username and a ready-to-display signed image URL.
     ///
+    /// The query carries no visibility filter of its own, on purpose. Row
+    /// Level Security decides which rows exist for this caller — the
+    /// `private.can_view_post()` rule — and it filters before `limit`
+    /// applies, so a page is full whenever more rows exist and the cursor
+    /// below is unaffected. Restating the rule here would be a second copy to
+    /// get wrong; see the README's Schema section (SOL-33).
+    ///
     /// Pass the previous page's last post's `cursor` as `before` to fetch the
     /// next page; omit it for the first page. The query asks for `limit + 1`
     /// rows and returns at most `limit`; whether the extra row came back is
