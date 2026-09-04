@@ -30,7 +30,7 @@ struct ProfileService {
         do {
             userID = try await client.auth.session.user.id
         } catch {
-            throw ProfileError.notSignedIn
+            throw Self.mapSessionError(error)
         }
 
         do {
@@ -44,6 +44,19 @@ struct ProfileService {
         } catch {
             throw Self.mapProfileError(error)
         }
+    }
+
+    /// Distinguishes "nobody is signed in" from "signed in, but the session
+    /// could not be refreshed just now" — typically no network. Both used to
+    /// come out as `.notSignedIn`, contradicting the tabs the person was
+    /// looking at. Only a genuinely missing session means not signed in; that
+    /// includes one the server has revoked, which the SDK reports the same way
+    /// after clearing it locally.
+    static func mapSessionError(_ error: Error) -> ProfileError {
+        if let authError = error as? AuthError, authError.errorCode == .sessionNotFound {
+            return .notSignedIn
+        }
+        return .other(error.localizedDescription)
     }
 
     static func mapProfileError(_ error: Error) -> ProfileError {

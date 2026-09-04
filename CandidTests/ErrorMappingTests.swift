@@ -185,6 +185,27 @@ struct ProfileErrorMappingTests {
             return
         }
     }
+
+    @Test("a missing session is reported as not signed in")
+    func sessionMissing() {
+        let mapped = ProfileService.mapSessionError(AuthError.sessionMissing)
+        guard case .notSignedIn = mapped else {
+            Issue.record("expected .notSignedIn, got \(mapped)")
+            return
+        }
+    }
+
+    /// Regression test. Every failure to read the session — a refresh that
+    /// could not reach the server included — used to be reported as "You're
+    /// not signed in", while the tabs on screen said otherwise.
+    @Test("a session that merely failed to refresh is not called not signed in")
+    func refreshFailureIsNotSignedOut() {
+        let mapped = ProfileService.mapSessionError(URLError(.notConnectedToInternet))
+        guard case .other = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
+    }
 }
 
 @Suite("Storage error mapping")
@@ -266,6 +287,24 @@ struct PostServiceTests {
             return
         }
         #expect(message.contains("foreign key constraint"))
+    }
+
+    @Test("a missing session is reported as not signed in")
+    func sessionMissing() {
+        let mapped = PostService.mapSessionError(AuthError.sessionMissing)
+        guard case .notSignedIn = mapped else {
+            Issue.record("expected .notSignedIn, got \(mapped)")
+            return
+        }
+    }
+
+    @Test("a session that merely failed to refresh is not called not signed in")
+    func refreshFailureIsNotSignedOut() {
+        let mapped = PostService.mapSessionError(URLError(.notConnectedToInternet))
+        guard case .other = mapped else {
+            Issue.record("expected .other, got \(mapped)")
+            return
+        }
     }
 }
 

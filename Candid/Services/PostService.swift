@@ -41,7 +41,7 @@ struct PostService {
         do {
             userId = try await client.auth.session.user.id
         } catch {
-            throw PostError.notSignedIn
+            throw Self.mapSessionError(error)
         }
 
         let uploaded = try await StorageService().uploadPostImage(image, userId: userId)
@@ -67,6 +67,17 @@ struct PostService {
     static func normalizedCaption(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// A missing session — including one the server has revoked, which the SDK
+    /// reports the same way — means not signed in. A session that merely failed
+    /// to refresh, typically for want of a network, does not, and says so in
+    /// its own words instead. See `ProfileService.mapSessionError`.
+    static func mapSessionError(_ error: Error) -> PostError {
+        if let authError = error as? AuthError, authError.errorCode == .sessionNotFound {
+            return .notSignedIn
+        }
+        return .other(error.localizedDescription)
     }
 
     static func mapPostError(_ error: Error) -> PostError {
