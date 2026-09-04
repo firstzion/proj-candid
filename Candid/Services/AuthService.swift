@@ -8,6 +8,7 @@ import Supabase
 enum SignUpError: LocalizedError {
     case emailAlreadyRegistered
     case usernameTaken
+    case invalidUsername(String)
     case invalidEmail
     case weakPassword(String)
     case other(String)
@@ -18,6 +19,9 @@ enum SignUpError: LocalizedError {
             return "An account with that email already exists."
         case .usernameTaken:
             return "That username is already taken. Try another one."
+        case .invalidUsername(let problem):
+            // Wording comes from `UsernameRules`, which knows what is wrong.
+            return problem
         case .invalidEmail:
             return "That email address doesn't look valid."
         case .weakPassword(let detail):
@@ -60,7 +64,14 @@ struct AuthService {
     func signUp(email: String, password: String, username: String) async throws -> SignUpResult {
         let client = try SupabaseService.shared.client()
         let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        let username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let username = UsernameRules.normalized(username)
+
+        // Say precisely what is wrong before any request. The database enforces
+        // the same rules, but a CHECK failure inside the sign-up trigger comes
+        // back as GoTrue's sanitised "Database error saving new user".
+        if let problem = UsernameRules.validationProblem(username) {
+            throw SignUpError.invalidUsername(problem)
+        }
 
         do {
             let response = try await client.auth.signUp(

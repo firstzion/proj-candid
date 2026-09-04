@@ -136,12 +136,22 @@ build settings for keys it already knows about, and silently drops unknown ones.
 
 | Table | Columns |
 |---|---|
-| `profiles` | `id` (PK → `auth.users`), `username` (unique), `created_at` |
-| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable), `created_at` |
+| `profiles` | `id` (PK → `auth.users`), `username` (unique, `^[a-z0-9_]{3,30}$`), `created_at` |
+| `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable, ≤ 2,200 characters), `created_at` |
 
 A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
 taking `username` from the sign-up metadata and falling back to a generated
-placeholder. Deleting an auth user cascades to their profile and posts.
+placeholder (`user_` plus 25 hex characters of the user's id, to fit the length
+limit). Deleting an auth user cascades to their profile and posts.
+
+Usernames are stored lowercase. The trigger lowercases and trims what the
+metadata carries, and a CHECK constraint enforces `^[a-z0-9_]{3,30}$`; because
+only lowercase is ever stored, the plain unique constraint is case-insensitive
+by construction — `Alice` and `alice` cannot be two people. The app mirrors the
+rules in `UsernameRules` so the sign-up form can say exactly what is wrong before
+sending anything: a CHECK failure inside the trigger only reaches the client as
+GoTrue's sanitised "Database error saving new user". Captions are capped at
+2,200 characters the same way, checked client-side before the image is uploaded.
 
 RLS is enabled on both tables. Reads are open to any authenticated user; inserts
 and updates are restricted to the caller's own rows. There are no delete policies,

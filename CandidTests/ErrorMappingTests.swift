@@ -306,6 +306,25 @@ struct PostServiceTests {
             return
         }
     }
+
+    @Test("a caption at the limit is accepted; one over it is refused before upload")
+    func captionLength() throws {
+        try PostService.validateCaption(nil)
+        try PostService.validateCaption(String(repeating: "a", count: PostService.maxCaptionLength))
+        #expect(throws: PostError.self) {
+            try PostService.validateCaption(String(repeating: "a", count: PostService.maxCaptionLength + 1))
+        }
+    }
+
+    /// Postgres' char_length counts code points, so the client must too: a
+    /// flag emoji is one Character to Swift but two to the CHECK constraint.
+    @Test("caption length is measured the way the database measures it")
+    func captionLengthCountsScalars() {
+        let flag = "🇬🇧"
+        let atLimit = String(repeating: flag, count: PostService.maxCaptionLength / 2)
+        #expect(throws: Never.self) { try PostService.validateCaption(atLimit) }
+        #expect(throws: PostError.self) { try PostService.validateCaption(atLimit + "a") }
+    }
 }
 
 @Suite("Feed error mapping")

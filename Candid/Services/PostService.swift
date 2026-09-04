@@ -4,6 +4,7 @@ import UIKit
 
 enum PostError: LocalizedError {
     case noImageSelected
+    case captionTooLong
     case notSignedIn
     case notPermitted(String)
     case other(String)
@@ -12,6 +13,8 @@ enum PostError: LocalizedError {
         switch self {
         case .noImageSelected:
             return "Choose a photo first."
+        case .captionTooLong:
+            return "Captions can be at most \(PostService.maxCaptionLength.formatted()) characters."
         case .notSignedIn:
             return "You're not signed in."
         case .notPermitted(let message):
@@ -37,6 +40,12 @@ struct PostService {
     func createPost(image: UIImage, caption: String) async throws {
         let client = try SupabaseService.shared.client()
 
+        // Cheapest check first: refusing here costs nothing, whereas letting the
+        // database's CHECK constraint refuse it would come after the image had
+        // already been uploaded — an orphaned object for a long caption.
+        let caption = Self.normalizedCaption(caption)
+        try Self.validateCaption(caption)
+
         let userId: UUID
         do {
             userId = try await client.auth.session.user.id
@@ -53,7 +62,7 @@ struct PostService {
                     NewPost(
                         userId: userId,
                         imagePath: imagePath,
-                        caption: Self.normalizedCaption(caption)
+                        caption: caption
                     )
                 )
                 .execute()
@@ -67,6 +76,19 @@ struct PostService {
     static func normalizedCaption(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The most characters a caption may hold — the `posts_caption_length`
+    /// CHECK in the schema, mirrored here so the refusal is a sentence rather
+    /// than a constraint name, and happens before the upload.
+    static let maxCaptionLength = 2200
+
+    /// Measures in Unicode scalars because that is what Postgres' `char_length`
+    /// counts: a flag emoji is one `Character` to Swift and two to the CHECK.
+    static func validateCaption(_ caption: String?) throws {
+        if let caption, caption.unicodeScalars.count > maxCaptionLength {
+            throw PostError.captionTooLong
+        }
     }
 
     /// A missing session — including one the server has revoked, which the SDK

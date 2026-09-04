@@ -36,6 +36,8 @@ struct SignUpView: View {
                     .textContentType(.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+            } footer: {
+                Text("Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores.")
             }
 
             Section {
