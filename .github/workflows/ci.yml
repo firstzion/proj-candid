@@ -25,30 +25,31 @@ concurrency:
 
 jobs:
   test:
-    # The Mac in the loop, registered as a self-hosted runner. GitHub's macOS
-    # runners bill at ten times the Linux rate on a private repo, so this one
-    # job was effectively the whole Actions budget: roughly seventy billed
-    # minutes per push, against a schema job costing two. Self-hosted is
-    # unmetered, and the Mac is already the machine that runs `supabase db
-    # push`.
-    #
-    # Jobs queue until the runner is online — that is the trade for it being
-    # free, and it is why `timeout-minutes` is set rather than left to the
-    # six-hour default.
-    runs-on: [self-hosted, macOS]
+    # Hosted, not self-hosted: the repo is public, so GitHub's macOS minutes
+    # are free here regardless of the 10x private-repo rate that motivated
+    # briefly routing this job through a self-hosted runner on the Mac. That
+    # runner was never actually registered, so every push since was queuing a
+    # job nobody would pick up — this restores the runner that just works.
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
-      # No setup-xcode step: on a hosted runner it selects among several
-      # Xcodes, on this Mac there is one, and switching it would need sudo and
-      # would change the machine outside CI.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
-      # No SPM cache step either. It existed because a hosted runner starts
-      # from an empty disk every time; this one keeps its DerivedData between
-      # runs, so restoring an older copy of SourcePackages over the current
-      # one would cost an upload and a download to achieve nothing.
+      # Package.resolved pins the exact versions SPM will fetch, so it is the
+      # right cache key input — unlike project.pbxproj, it only changes when a
+      # dependency actually changes.
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('Candid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
 
       # Hardcoding a device name risks it not existing on the runner's
       # simulator image; the runner's own available-devices list already
