@@ -29,7 +29,10 @@ delete your own posts from the feed — long-press, confirm, and the row and its
 image are both gone (SOL-38) — and the upload pipeline is now proven rather
 than assumed to strip EXIF, location included (SOL-44). The profile screen is
 real now: counts, a grid, and the follow lists where they may be read
-(SOL-37).
+(SOL-37). And sign-up is invite-only (Milestone 9, SOL-60–62): a new account
+needs a code from someone already here, the trigger that creates its profile
+also redeems the code and makes the two friends, and nobody's first feed is
+empty.
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -150,7 +153,10 @@ new post and, for delete, the row-then-object order and the by-`id`-only
 filter; `ProfileServiceRequestTests` pins the exact-username lookup and the
 HEAD-with-count request behind a profile's post count the same way; the
 follow lists and the grid's author scope are pinned alongside the requests
-they extend. All of them build their client with `TestSupabaseClient` in
+they extend. `InviteServiceTests` and `AuthServiceSignUpTests` pin the invite
+calls and the gate: a code that is not valid stops the sign-up before any
+request but the status check, and a valid one travels in the sign-up
+metadata. All of them build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
 The authorization rule itself is tested in SQL, not Swift.
@@ -161,7 +167,10 @@ follower's, a mutual's and a stranger's seat; both directions of a block, even
 across a follow edge; the profile rows a blocked pair cannot read; the storage
 policy that signing depends on; mutuality breaking the moment one side
 unfollows; and, since SOL-66, that a follow edge is readable only at either
-end or by a mutual of either end while `follow_counts()` answers for anyone.
+end or by a mutual of either end while `follow_counts()` answers for anyone;
+and, since Milestone 9, the invite gate itself — sign-ups made the way GoTrue
+makes them, refused and rolled back for a missing, used or expired code,
+admitted and made mutual for a valid one, and the quota holding at five.
 Everything it touches is rolled back. Run it against the hosted
 project after a push and a seed run:
 
@@ -180,12 +189,14 @@ Config/               Build configuration; Secrets.xcconfig here is gitignored
 Candid/
   CandidApp.swift     App entry point
   Models/             FeedPost/FeedPage/FeedCursor, Profile, Relationship,
-                      UsernameRules
+                      FollowCounts, Invite/InviteState, UsernameRules
   ViewModels/         SessionStore (mirrors the SDK's auth state),
-                      FeedInvalidation (tells the feed to refresh after a post)
+                      FeedInvalidation (tells the feed to refresh after a post),
+                      PendingInvite (a code that arrived by deep link)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
-                      FollowService, StorageService, ImageCache, ImageDownsampler
+                      FollowService, InviteService, StorageService, ImageCache,
+                      ImageDownsampler
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView
@@ -256,16 +267,24 @@ build settings for keys it already knows about, and silently drops unknown ones.
 
 | Table | Columns |
 |---|---|
-| `profiles` | `id` (PK → `auth.users`), `username` (unique, `^[a-z0-9_]{3,30}$`), `created_at` |
+| `profiles` | `id` (PK → `auth.users`), `username` (unique, `^[a-z0-9_]{3,30}$`), `invite_quota` (default 5), `created_at` |
 | `posts` | `id` (PK), `user_id` (→ `profiles`), `image_path`, `caption` (nullable, ≤ 2,200 characters), `visibility` (`followers` \| `mutuals`, default `followers`, immutable), `created_at` |
 | `follows` | `follower_id` (→ `profiles`), `followee_id` (→ `profiles`), `created_at`; PK (`follower_id`, `followee_id`), CHECK `follower_id <> followee_id` |
 | `blocks` | `blocker_id` (→ `profiles`), `blocked_id` (→ `profiles`), `created_at`; PK (`blocker_id`, `blocked_id`), CHECK `blocker_id <> blocked_id` |
+| `invites` | `code` (PK), `inviter_id` (→ `profiles`, cascade), `redeemed_by` (→ `profiles`, set null), `redeemed_at`, `created_at`, `expires_at` |
 
-A trigger on `auth.users` auto-creates the matching `profiles` row at sign-up,
-taking `username` from the sign-up metadata and falling back to a generated
+A trigger on `auth.users` (`handle_new_user`) runs inside GoTrue's insert at
+sign-up. Since Milestone 9 it is the whole onboarding transaction: it requires
+an `invite_code` in the sign-up metadata and refuses — rolling the sign-up
+back, so no auth user and no profile are ever left behind — if the code is
+missing, unknown, already used or expired; then it creates the `profiles` row,
+taking `username` from the metadata and falling back to a generated
 placeholder (`user_` plus 25 hex characters of the user's id, to fit the length
-limit). Deleting an auth user cascades to their profile, posts, follow edges
-and blocks, in both directions.
+limit), marks the invite redeemed, and inserts a follow edge in each direction
+between inviter and invitee, so the two are friends before the first feed
+loads. See Invites below. Deleting an auth user cascades to their profile,
+posts, follow edges, blocks and the invites they minted, and clears
+`redeemed_by` on any invite they used.
 
 `follows` is the social graph: one row per directional edge, where `(a, b)`
 means a follows b. Following is open — anyone can follow anyone, with no
@@ -327,6 +346,30 @@ now" — never why. `FollowService.block`, `unblock`, `isBlocking` and
 `relationship(with:)` (which reports `blocking`) are the client surface;
 `ProfileScreen` puts Block behind a confirmation that says what will
 happen, and Unblock in its place once blocked.
+
+`invites` is how Candid grows (SOL-60–62, decided in SOL-43): a new account
+needs a code from an existing one. Each profile has an `invite_quota` (default
+5, raisable per account with an update rather than a migration) that counts
+redeemed codes plus outstanding unexpired ones — a revoked or expired code
+gives its slot back, so the quota limits people brought in, not typos. Codes
+are minted only by `create_invite()`, a definer function callable by
+`authenticated`: ten glyphs from a 31-glyph alphabet with no 0/O/1/I/L, shown
+as `XXXXX-XXXXX`, drawn from `gen_random_bytes` with rejection sampling, about
+10^15 possibilities, expiring after 30 days by default. `invite_status(code)`
+is the one thing `anon` may call — the sign-up form asks it before creating
+anything, so each failure gets its own sentence — and answers exactly one of
+`valid`, `not_found`, `redeemed` or `expired`, never a row. RLS on the table is
+read-your-own and delete-your-own-unredeemed (that is "revoke"); there is no
+insert or update policy for clients, since minting and redeeming both happen
+as owner. Redemption is at sign-up, not at email confirmation, by decision: a
+never-confirmed account spends its code and leaves the inviter following an
+inert account, which the invites screen shows and a later sweep can clean up.
+The seed creates its accounts without invites by setting
+`candid.allow_uninvited_signup` for its own session — a setting GoTrue has no
+way to set and no API-reachable function sets. `InviteService` is the client
+surface (`status`, `create`, `mine`, `revoke`, `quota`); `AuthService.signUp`
+checks the code first and sends it in the metadata; and `candid://invite/<code>`
+opens the sign-up form with the code filled in (`PendingInvite`).
 
 The helpers the policies call — `private.is_blocked_either_way(a, b)` and
 `private.is_blocked_by(viewer, owner)` — live in a `private` schema that
@@ -528,12 +571,17 @@ Hosted auth settings live in `supabase/config.toml` under `[auth]` and are appli
 with `supabase config push`. Email confirmation is required
 (`[auth.email] enable_confirmations = true`) — `AuthService.signUp` reports
 whether a session came back, and `SignUpView` shows a "confirm your email"
-notice when it didn't. `minimum_password_length` is 10, with no composition
+notice when it didn't. Sign-up also requires an invite code (see Invites under
+Schema): the code is checked with `invite_status` before the request and
+enforced by the sign-up trigger, and existing accounts log in unaffected.
+`minimum_password_length` is 10, with no composition
 rules (NIST SP 800-63B favours length over forced character classes).
 Confirmation, password-reset, and magic-link emails link to
 `candid://auth-callback`, a custom URL scheme registered in
 `Config/Info.plist` (`CFBundleURLTypes`) and handled by `CandidApp`'s
-`onOpenURL`, which hands the callback URL to `client.auth.session(from:)`.
+`onOpenURL`, which hands the callback URL to `client.auth.session(from:)`. The
+same scheme carries invite links: `candid://invite/<code>` is routed to
+`PendingInvite` instead, and the sign-up form opens with the code filled in.
 
 Two things this repo does *not* configure, since neither is a `config.toml`
 key:
@@ -602,7 +650,12 @@ friends-only and the other two are followers-only, with the tier named in the
 caption, so a tester can tell which rows a one-way follower is supposed to be
 missing. One block is seeded: dave blocks erin, two accounts with no other tie,
 so the visibility rule's "blocked in either direction" check can be tested
-from both sides without the block having disturbed the follow graph.
+from both sides without the block having disturbed the follow graph. Since
+the sign-up trigger requires an invite, the seed first sets
+`candid.allow_uninvited_signup` for its session, then gives alice three codes:
+`CANDD-SEED2` (valid — sign a new account up with it), `CANDD-SEED3` (redeemed
+by bob) and `CANDD-SEED4` (expired). Re-seeding recreates alice, which drops
+those rows and any follow edges a real account made with her.
 
 ## Conventions
 

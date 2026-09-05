@@ -11,11 +11,23 @@ enum SignUpError: LocalizedError {
     case invalidUsername(String)
     case invalidEmail
     case weakPassword(String)
+    case inviteMissing
+    case inviteNotFound
+    case inviteRedeemed
+    case inviteExpired
     case accountCreationFailed
     case other(String)
 
     var errorDescription: String? {
         switch self {
+        case .inviteMissing:
+            return "Enter the invite code you were sent."
+        case .inviteNotFound:
+            return "That code doesn't exist. Check it against the message you were sent."
+        case .inviteRedeemed:
+            return "That code has already been used."
+        case .inviteExpired:
+            return "That code has expired. Ask for a new one."
         case .emailAlreadyRegistered:
             // Deliberate email enumeration, unlike the log-in path below.
             // Decision (SOL-53): accepted for now — most consumer apps make
@@ -36,11 +48,12 @@ enum SignUpError: LocalizedError {
             return detail
         case .accountCreationFailed:
             // GoTrue's sanitised "Database error saving new user" — see
-            // `mapSignUpError`. With the format validated and availability
-            // checked first, this is either a lost race for the username or a
-            // genuine server-side failure; the wording leaves both open rather
-            // than asserting the username was taken.
-            return "The account couldn't be created. That username may have just been taken — try another, or try again in a moment."
+            // `mapSignUpError`. With the format validated, availability
+            // checked and the invite code's status asked first, this is a
+            // lost race for the username or the code — the trigger refuses a
+            // code used a moment ago — or a genuine server-side failure; the
+            // wording leaves them all open rather than asserting one.
+            return "The account couldn't be created. That username or invite code may have just been taken — try again in a moment."
         case .other(let message):
             return message
         }
@@ -77,15 +90,41 @@ struct SignUpResult {
 struct AuthService {
     let client: SupabaseClient
 
-    func signUp(email: String, password: String, username: String) async throws -> SignUpResult {
+    /// Creates the account. Sign-up is invite-only (SOL-61): `inviteCode` is
+    /// checked with `invite_status` first so each of the three ways a code can
+    /// be bad gets its own sentence, then travels in the sign-up metadata,
+    /// where the database trigger is the enforcement — it refuses a missing,
+    /// unknown, used or expired code and rolls the whole sign-up back, so a
+    /// bad code never leaves an orphaned account. The trigger also redeems
+    /// the code and makes inviter and invitee friends, in the same
+    /// transaction (SOL-62).
+    func signUp(email: String, password: String, username: String, inviteCode: String) async throws -> SignUpResult {
         let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let username = UsernameRules.normalized(username)
+        let inviteCode = InviteService.normalized(inviteCode)
 
         // Say precisely what is wrong before any request. The database enforces
         // the same rules, but a CHECK failure inside the sign-up trigger comes
         // back as GoTrue's sanitised "Database error saving new user".
         if let problem = UsernameRules.validationProblem(username) {
             throw SignUpError.invalidUsername(problem)
+        }
+        guard !inviteCode.isEmpty else {
+            throw SignUpError.inviteMissing
+        }
+
+        // The gate's wording. Advisory like the availability check below: a
+        // code that is spent between this answer and the sign-up is refused
+        // by the trigger and reported as `.accountCreationFailed`.
+        switch try await inviteStatus(inviteCode) {
+        case .valid:
+            break
+        case .notFound:
+            throw SignUpError.inviteNotFound
+        case .redeemed:
+            throw SignUpError.inviteRedeemed
+        case .expired:
+            throw SignUpError.inviteExpired
         }
 
         // Ask before creating the auth user, for the same reason: a duplicate
@@ -99,7 +138,7 @@ struct AuthService {
             let response = try await client.auth.signUp(
                 email: email,
                 password: password,
-                data: ["username": .string(username)]
+                data: ["username": .string(username), "invite_code": .string(inviteCode)]
             )
             return SignUpResult(hasActiveSession: response.session != nil)
         } catch {
@@ -125,6 +164,17 @@ struct AuthService {
                 .value
         } catch {
             throw Self.mapSignUpError(error)
+        }
+    }
+
+    /// Asks `invite_status` about the code, through `InviteService`. The
+    /// person asking has no session yet; the function is callable by `anon`
+    /// and answers one enum value.
+    private func inviteStatus(_ code: String) async throws -> InviteState {
+        do {
+            return try await InviteService(client: client).status(code: code)
+        } catch {
+            throw SignUpError.other(error.localizedDescription)
         }
     }
 

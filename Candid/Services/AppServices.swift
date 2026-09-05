@@ -13,6 +13,7 @@ struct AppServices {
     let feed: FeedService
     let follow: FollowService
     let storage: StorageService
+    let invite: InviteService
 
     init(client: SupabaseClient) {
         auth = AuthService(client: client)
@@ -21,6 +22,7 @@ struct AppServices {
         feed = FeedService(client: client)
         follow = FollowService(client: client)
         storage = StorageService(client: client)
+        invite = InviteService(client: client)
     }
 }
 

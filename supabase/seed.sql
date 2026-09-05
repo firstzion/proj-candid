@@ -22,6 +22,8 @@
 -- All ten accounts share one password: CandidSeed123!  (14 characters,
 -- clears the 10-character minimum in config.toml). Usernames are the account
 -- names below, already lowercase [a-z0-9_] as profiles.username requires.
+-- alice also holds three invite codes (see the bottom): CANDD-SEED2 is the
+-- valid one to sign a new account up with.
 
 -- -----------------------------------------------------------------------
 -- Reset: drop any previous run's seed data before recreating it
@@ -29,6 +31,15 @@
 -- auth.users -> profiles -> posts, follows and blocks all cascade on delete,
 -- so this one statement is the whole reset.
 delete from auth.users where email like '%@seed.candid.test';
+
+-- -----------------------------------------------------------------------
+-- Uninvited sign-ups, for this session only
+-- -----------------------------------------------------------------------
+-- Since SOL-61 the sign-up trigger requires a valid invite code and would
+-- refuse every account below. This setting is the owner's way past that,
+-- read by handle_new_user(); it lasts for this session, and nothing a client
+-- can reach is able to set it — see the invites migration.
+select set_config('candid.allow_uninvited_signup', 'on', false);
 
 -- -----------------------------------------------------------------------
 -- Accounts
@@ -138,3 +149,21 @@ insert into public.follows (follower_id, followee_id) values
 -- pair (trigger); dave and erin have none, so the graph above is unchanged.
 insert into public.blocks (blocker_id, blocked_id) values
     ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005'); -- dave blocks erin
+
+-- -----------------------------------------------------------------------
+-- Invites (SOL-60)
+-- -----------------------------------------------------------------------
+-- Three of alice's five: one valid with a fixed value so the SOL-64 walk has
+-- a code to type, one redeemed by bob so the invites screen has a "who
+-- redeemed" row, one expired. The codes use create_invite()'s alphabet (no
+-- 0/O/1/I/L). The expired one gives its slot back, so alice can still mint
+-- three more. Re-running the seed deletes and recreates alice, which
+-- cascades to these rows and to any follow edges a walk's real account made
+-- with her; that account itself is untouched.
+insert into public.invites (code, inviter_id, redeemed_by, redeemed_at, created_at, expires_at) values
+    ('CANDD-SEED2', '00000000-0000-0000-0000-000000000001', null, null,
+        now(), now() + interval '30 days'),                                          -- valid
+    ('CANDD-SEED3', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002',
+        now() - interval '3 days', now() - interval '5 days', now() + interval '25 days'), -- redeemed by bob
+    ('CANDD-SEED4', '00000000-0000-0000-0000-000000000001', null, null,
+        now() - interval '40 days', now() - interval '10 days');                    -- expired

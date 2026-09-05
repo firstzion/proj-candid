@@ -2,10 +2,15 @@ import SwiftUI
 
 struct LogInView: View {
     @Environment(\.services) private var services
+    @Environment(PendingInvite.self) private var pendingInvite
 
     @State private var email = ""
     @State private var password = ""
     @State private var isSubmitting = false
+
+    /// Pushed by the Sign Up button — and by an invite link arriving, so the
+    /// person lands in the form with their code already in it (SOL-61).
+    @State private var isShowingSignUp = false
 
     /// Only failures are shown. A successful log in emits on the SDK's
     /// auth-state stream, `RootView` swaps to the main tabs, and this view is
@@ -34,12 +39,17 @@ struct LogInView: View {
             FormMessageSection(message: message)
 
             Section {
-                NavigationLink("Don't have an account? Sign Up") {
-                    SignUpView()
+                Button("Don't have an account? Sign Up") {
+                    isShowingSignUp = true
                 }
             }
         }
         .navigationTitle("Log In")
+        .navigationDestination(isPresented: $isShowingSignUp) {
+            SignUpView()
+        }
+        .task { if pendingInvite.code != nil { isShowingSignUp = true } }
+        .onChange(of: pendingInvite.code) { if pendingInvite.code != nil { isShowingSignUp = true } }
     }
 
     /// Trims what `AuthService` trims, so the button and the request agree on
@@ -69,4 +79,5 @@ struct LogInView: View {
         LogInView()
     }
     .environment(\.services, AppServices(client: .preview))
+    .environment(PendingInvite())
 }

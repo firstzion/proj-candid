@@ -3,10 +3,12 @@ import SwiftUI
 struct SignUpView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.services) private var services
+    @Environment(PendingInvite.self) private var pendingInvite
 
     @State private var email = ""
     @State private var password = ""
     @State private var username = ""
+    @State private var inviteCode = ""
     @State private var isSubmitting = false
 
     /// Never a success. A sign-up that returns a session emits on the SDK's
@@ -33,10 +35,16 @@ struct SignUpView: View {
                     .textContentType(.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+
+                // Sign-up is invite-only (SOL-61). Pre-filled from an invite
+                // link when there is one; typed from the message otherwise.
+                TextField("Invite code", text: $inviteCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
             } footer: {
                 // "10" mirrors minimum_password_length in supabase/config.toml,
                 // not a client-enforced rule — keep the two in sync by hand.
-                Text("Passwords must be at least 10 characters. Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores.")
+                Text("Candid is invite-only: you need a code from someone who is already here. Passwords must be at least 10 characters. Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores.")
             }
 
             Section {
@@ -54,6 +62,15 @@ struct SignUpView: View {
             }
         }
         .navigationTitle("Sign Up")
+        .task { takePendingInvite() }
+        .onChange(of: pendingInvite.code) { takePendingInvite() }
+    }
+
+    /// Moves a code that arrived by deep link into the field, once.
+    private func takePendingInvite() {
+        guard let code = pendingInvite.code else { return }
+        inviteCode = code
+        pendingInvite.code = nil
     }
 
     /// Trims what `AuthService` trims, so the button and the request agree on
@@ -62,6 +79,7 @@ struct SignUpView: View {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !password.isEmpty
             && !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !InviteService.normalized(inviteCode).isEmpty
     }
 
     private func submit() async {
@@ -72,7 +90,8 @@ struct SignUpView: View {
             let result = try await services!.auth.signUp(
                 email: email,
                 password: password,
-                username: username
+                username: username,
+                inviteCode: inviteCode
             )
             // On success with a session, RootView takes over and this is moot.
             message = result.hasActiveSession
@@ -91,4 +110,5 @@ struct SignUpView: View {
         SignUpView()
     }
     .environment(\.services, AppServices(client: .preview))
+    .environment(PendingInvite())
 }

@@ -45,6 +45,7 @@ private struct ConfiguredRootScene: View {
 
     @StateObject private var sessionStore: SessionStore
     @State private var feedInvalidation = FeedInvalidation()
+    @State private var pendingInvite = PendingInvite()
 
     init(services: AppServices, client: SupabaseClient) {
         self.services = services
@@ -57,16 +58,23 @@ private struct ConfiguredRootScene: View {
             .environmentObject(sessionStore)
             .environment(\.services, services)
             .environment(feedInvalidation)
+            .environment(pendingInvite)
             .task { await sessionStore.observe() }
             .onOpenURL { url in
-                Task { await handleAuthCallback(url) }
+                if let code = PendingInvite.code(from: url) {
+                    // An invite link (SOL-61). Held for the sign-up form, which
+                    // takes it when it appears; see PendingInvite.
+                    pendingInvite.code = code
+                } else {
+                    Task { await handleAuthCallback(url) }
+                }
             }
     }
 
     /// Completes email confirmation / password reset / magic-link sign-in.
     ///
     /// The `candid://auth-callback` link from a Supabase auth email lands
-    /// here; `session(from:)` parses the tokens out of it and establishes the
+    /// here — any `candid://` URL that is not an invite link does; `session(from:)` parses the tokens out of it and establishes the
     /// session, which `SessionStore`'s `authStateChanges` subscription then
     /// picks up like any other sign-in. A failure here just means the link
     /// was stale or already used — nothing to surface, the person can retry

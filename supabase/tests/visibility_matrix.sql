@@ -17,7 +17,9 @@
 -- Seeded shapes this relies on (supabase/seed.sql):
 --   alice <-> bob mutual; carol -> alice and ivan -> alice one-way;
 --   dave blocks erin, with no follows between them; judy unconnected;
---   each account's post 3 is 'mutuals', posts 1 and 2 are 'followers'.
+--   each account's post 3 is 'mutuals', posts 1 and 2 are 'followers';
+--   alice holds three invites — CANDD-SEED2 valid, CANDD-SEED3 redeemed by
+--   bob, CANDD-SEED4 expired — against a quota of 5.
 --
 -- Case numbers follow SOL-30's test pass, plus SOL-28's "unfollowing one side
 -- removes the pair" (10), the profile and re-follow rules from SOL-31
@@ -25,8 +27,10 @@
 -- (14-16: an edge is readable at either end or by a mutual of either end,
 -- and the counts are public through follow_counts()), deleting a post from
 -- SOL-38 (17: only the author, and the object only once the row is gone),
--- and the profile's post count from SOL-37 (18: counted under RLS, so it is
--- "the posts you can see").
+-- the profile's post count from SOL-37 (18: counted under RLS, so it is
+-- "the posts you can see"), and invite-only onboarding from SOL-60/61/62
+-- (19-23: one enum value to the world, own rows only, the gate refuses and
+-- rolls back, a good code admits and befriends, the quota holds).
 
 begin;
 
@@ -48,6 +52,41 @@ language plpgsql
 as $$
 begin
     execute 'reset role';
+end;
+$$;
+
+-- Nobody: no claims, the anon role — a request from the sign-up form before
+-- an account exists.
+create function pg_temp.act_as_anon() returns void
+language plpgsql
+as $$
+begin
+    perform set_config('request.jwt.claims', '', true);
+    execute 'set local role anon';
+end;
+$$;
+
+-- A sign-up the way GoTrue does it: one insert into auth.users, inside which
+-- handle_new_user() fires and either provisions everything or refuses the
+-- whole thing. The seed writes the same rows. A null code leaves the key out
+-- of the metadata, as a form with an empty field would.
+create function pg_temp.sign_up(p_id uuid, p_username text, p_code text) returns void
+language plpgsql
+as $$
+begin
+    insert into auth.users (
+        instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+        confirmation_token, recovery_token, email_change_token_new, email_change
+    ) values (
+        '00000000-0000-0000-0000-000000000000', p_id, 'authenticated', 'authenticated',
+        p_username || '@matrix.candid.test',
+        extensions.crypt('CandidSeed123!', extensions.gen_salt('bf')),
+        now(),
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        jsonb_strip_nulls(jsonb_build_object('username', p_username, 'invite_code', p_code)),
+        now(), now(), '', '', '', ''
+    );
 end;
 $$;
 
@@ -84,6 +123,9 @@ begin
         'precondition: ivan should follow alice';
     select count(*) into n from public.follows where followee_id = alice;
     assert n = 3, format('precondition: alice should have exactly 3 followers (bob, carol, ivan), has %s', n);
+    select count(*) into n from public.invites where inviter_id = alice;
+    assert n = 3, format('precondition: alice should hold 3 seeded invites, holds %s — re-run the seed after the invites migration', n);
+    assert (select invite_quota from public.profiles where id = alice) = 5, 'precondition: alice''s invite quota should be 5';
     select image_path into alice_mutuals_path from public.posts where user_id = alice and visibility = 'mutuals';
 
     -- 1, 2: the author sees their own posts at both tiers.
@@ -243,6 +285,148 @@ begin
     select count(*) into n from public.posts where user_id = alice;
     assert n = 0, format('case 18: judy''s count of alice''s posts should be 0, is %s', n);
 
+    -- 19: what the world may learn about a code is one enum value (SOL-60).
+    -- anon can call invite_status() and nothing else: the table answers no
+    -- rows (or refuses outright — either is nothing), and create_invite()
+    -- is not executable.
+    perform pg_temp.act_as_anon();
+    assert public.invite_status('candd-seed2') = 'valid', 'case 19: the seeded valid code should read valid to anon';
+    assert public.invite_status('CANDD-SEED3') = 'redeemed', 'case 19: the seeded redeemed code should read redeemed';
+    assert public.invite_status('CANDD-SEED4') = 'expired', 'case 19: the seeded expired code should read expired';
+    assert public.invite_status('NOPE2-NOPE2') = 'not_found', 'case 19: an unknown code should read not_found';
+    begin
+        select count(*) into n from public.invites;
+        assert n = 0, format('case 19: anon must read no invite rows, reads %s', n);
+    exception when insufficient_privilege then
+        null;
+    end;
+
+    -- 20: invites are readable and revocable by their inviter alone, a
+    -- redeemed one is not revocable at all, and nobody inserts rows directly.
+    perform pg_temp.act_as(bob);
+    select count(*) into n from public.invites where inviter_id = alice;
+    assert n = 0, format('case 20: bob must read none of alice''s invites, reads %s', n);
+    delete from public.invites where code = 'CANDD-SEED2';
+    get diagnostics n = row_count;
+    assert n = 0, format('case 20: bob must not revoke alice''s code, deleted %s', n);
+    perform pg_temp.act_as(alice);
+    select count(*) into n from public.invites where inviter_id = alice;
+    assert n = 3, format('case 20: alice should read her 3 invites, reads %s', n);
+    delete from public.invites where code = 'CANDD-SEED3';
+    get diagnostics n = row_count;
+    assert n = 0, format('case 20: a redeemed code must not be deletable, deleted %s', n);
+    begin
+        insert into public.invites (code, inviter_id) values ('HANDM-ADE22', alice);
+        raise exception 'case 20: alice could insert an invite row directly';
+    exception when insufficient_privilege then
+        null;
+    end;
+
+    -- 21: the gate (SOL-61). Without a code, with a used code and with an
+    -- expired code the sign-up is refused inside the trigger, and the
+    -- auth.users row it was part of goes with it: no orphan, no profile.
+    perform pg_temp.act_as_owner();
+    declare
+        v_code text;
+        v_id   uuid;
+    begin
+        foreach v_code in array array[null, 'CANDD-SEED3', 'CANDD-SEED4'] loop
+            v_id := gen_random_uuid();
+            begin
+                perform pg_temp.sign_up(v_id, 'refused_' || left(replace(v_id::text, '-', ''), 8), v_code);
+                raise exception 'case 21: a sign-up with code % was not refused', coalesce(v_code, '(none)');
+            exception when check_violation then
+                null;
+            end;
+            assert not exists (select 1 from auth.users where id = v_id),
+                format('case 21: the refused sign-up with code %s left an auth.users row', coalesce(v_code, '(none)'));
+            assert not exists (select 1 from public.profiles where id = v_id),
+                format('case 21: the refused sign-up with code %s left a profile', coalesce(v_code, '(none)'));
+        end loop;
+    end;
+
+    -- 22: a good code admits the account, spends the code, and makes the pair
+    -- friends at once (SOL-62): both edges, the mutuals pair, and — since
+    -- can_view_post() reads mutuals — alice's friends-only post on the new
+    -- account's very first query, and the new account's post to alice, with
+    -- no action from either. The code is typed in lowercase on purpose.
+    declare
+        v_new uuid := gen_random_uuid();
+    begin
+        perform pg_temp.sign_up(v_new, 'newcomer', 'candd-seed2');
+        assert exists (select 1 from public.profiles where id = v_new and username = 'newcomer'),
+            'case 22: the profile should exist';
+        assert exists (select 1 from public.invites where code = 'CANDD-SEED2' and redeemed_by = v_new and redeemed_at is not null),
+            'case 22: the invite should be redeemed by the new account';
+        assert exists (select 1 from public.follows where follower_id = v_new and followee_id = alice),
+            'case 22: the newcomer -> alice edge is missing';
+        assert exists (select 1 from public.follows where follower_id = alice and followee_id = v_new),
+            'case 22: the alice -> newcomer edge is missing';
+        assert exists (select 1 from public.mutuals where user_id = v_new and mutual_id = alice),
+            'case 22: the pair should be mutual';
+        insert into public.posts (user_id, image_path, caption, visibility)
+        values (v_new, v_new::text || '/' || gen_random_uuid()::text || '.jpg', 'first post', 'mutuals');
+
+        perform pg_temp.act_as(v_new);
+        select count(*) into n from public.posts where user_id = alice;
+        assert n = 3, format('case 22: the newcomer should see all 3 of alice''s posts on the first query, sees %s', n);
+        select count(*) into n from public.posts;
+        assert n = 4, format('case 22: the newcomer''s first feed should hold 4 rows (alice''s 3 plus their own), holds %s', n);
+        perform pg_temp.act_as(alice);
+        select count(*) into n from public.posts where user_id = v_new;
+        assert n = 1, format('case 22: alice should see the newcomer''s friends-only post without acting, sees %s', n);
+        select f.followers, f.following into n, m from public.follow_counts(v_new) f;
+        assert n = 1 and m = 1, format('case 22: follow_counts(newcomer) should be 1 / 1, is %s / %s', n, m);
+
+        -- Single use: the same code is refused a second time, and reads as
+        -- redeemed to the world.
+        perform pg_temp.act_as_owner();
+        begin
+            perform pg_temp.sign_up(gen_random_uuid(), 'newcomer2', 'CANDD-SEED2');
+            raise exception 'case 22: the redeemed code was accepted a second time';
+        exception when check_violation then
+            null;
+        end;
+        assert public.invite_status('CANDD-SEED2') = 'redeemed', 'case 22: the used code should now read redeemed';
+
+        -- Nothing about the edge is special: the newcomer can unfollow it.
+        perform pg_temp.act_as(v_new);
+        delete from public.follows where follower_id = v_new and followee_id = alice;
+        get diagnostics n = row_count;
+        assert n = 1, format('case 22: the newcomer should be able to unfollow alice, deleted %s', n);
+    end;
+
+    -- 23: the quota (SOL-60), counted server-side as redeemed plus
+    -- outstanding unexpired codes. alice has used two of five — CANDD-SEED2
+    -- and SEED3 redeemed, SEED4 expired and returned — so three more mint,
+    -- the fourth is refused, and revoking one gives its slot back.
+    perform pg_temp.act_as(alice);
+    for i in 1..3 loop
+        select code into msg from public.create_invite();
+        assert msg ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}$',
+            format('case 23: minted code %s is not in the expected shape', msg);
+    end loop;
+    begin
+        perform public.create_invite();
+        raise exception 'case 23: a sixth invite was minted past the quota';
+    exception when check_violation then
+        get stacked diagnostics msg = message_text;
+        assert msg = 'invite quota reached', format('case 23: unexpected refusal: %s', msg);
+    end;
+    delete from public.invites
+    where code = (
+        select code from public.invites
+        where inviter_id = alice and redeemed_at is null and (expires_at is null or expires_at > now())
+        order by created_at desc limit 1
+    );
+    get diagnostics n = row_count;
+    assert n = 1, format('case 23: alice should revoke one of her unredeemed codes, deleted %s', n);
+    perform public.create_invite();
+    select count(*) into n from public.invites
+    where inviter_id = alice and (redeemed_at is not null or expires_at is null or expires_at > now());
+    assert n = 5, format('case 23: alice should be at exactly 5 slots used again, is at %s', n);
+    perform pg_temp.act_as_owner();
+
     -- 10: breaking mutuality takes effect at once — bob's mutuals post leaves
     -- alice's view the moment bob stops following her, while his followers
     -- posts stay, since alice still follows him.
@@ -303,6 +487,14 @@ begin
         'exposure: anon can execute follow_counts';
     assert has_function_privilege('authenticated', 'public.follow_counts(uuid)', 'execute'),
         'exposure: authenticated cannot execute follow_counts';
+    assert has_function_privilege('anon', 'public.invite_status(text)', 'execute'),
+        'exposure: anon cannot execute invite_status, so the sign-up form cannot check a code';
+    assert not has_function_privilege('anon', 'public.create_invite(interval)', 'execute'),
+        'exposure: anon can execute create_invite';
+    assert has_function_privilege('authenticated', 'public.create_invite(interval)', 'execute'),
+        'exposure: authenticated cannot execute create_invite';
+    assert not has_function_privilege('anon', 'public.handle_new_user()', 'execute'),
+        'exposure: anon can execute handle_new_user';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
 
