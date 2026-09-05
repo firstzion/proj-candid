@@ -81,8 +81,14 @@ struct AuthServiceSignUpTests {
                 return .init(body: Data("true".utf8))
             default:
                 // The sign-up itself is answered with an error: what is under
-                // test is the request, not GoTrue's response shape.
-                return .init(statusCode: 500, body: Data(#"{"code":"unexpected_failure","msg":"stub"}"#.utf8))
+                // test is the request, not GoTrue's response shape. 400 rather
+                // than 500 on purpose — the Auth client wraps a
+                // RetryRequestInterceptor that retries POST requests once on
+                // any of its default retryable status codes, 500 included
+                // (Sources/Helpers/HTTP/RetryRequestInterceptor.swift), so a
+                // 500 here would silently record two /auth/v1/signup requests
+                // instead of the one this test means to pin.
+                return .init(statusCode: 400, body: Data(#"{"code":"unexpected_failure","msg":"stub"}"#.utf8))
             }
         }
 
