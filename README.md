@@ -304,7 +304,7 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | `blocks` | `blocker_id` (→ `profiles`), `blocked_id` (→ `profiles`), `created_at`; PK (`blocker_id`, `blocked_id`), CHECK `blocker_id <> blocked_id` |
 | `invites` | `code` (PK), `inviter_id` (→ `profiles`, cascade), `redeemed_by` (→ `profiles`, set null), `redeemed_at`, `created_at`, `expires_at` |
 | `username_history` | `profile_id` (→ `profiles`, cascade), `username`, `changed_at`; PK (`profile_id`, `changed_at`) |
-| `reports` | `id` (PK), `reporter_id` (→ `profiles`), `reported_profile_id` (→ `profiles`), `reported_post_id` (→ `posts`, set null), `about_post`, `reason` (enum), `details` (≤ 500), `status` (`open` \| `reviewed` \| `actioned`), `created_at`; CHECK `reporter_id <> reported_profile_id` |
+| `reports` | `id` (PK), `reporter_id` (→ `profiles`, cascade), `reported_profile_id` (→ `profiles`, set null), `reported_post_id` (→ `posts`, set null), `about_post`, `reason` (enum), `details` (≤ 500), `status` (`open` \| `reviewed` \| `actioned`), `created_at`; CHECK `reporter_id <> reported_profile_id` |
 
 A trigger on `auth.users` (`handle_new_user`) runs inside GoTrue's insert at
 sign-up. Since Milestone 9 it is the whole onboarding transaction: it requires
@@ -388,7 +388,9 @@ gives its slot back, so the quota limits people brought in, not typos. Codes
 are minted only by `create_invite()`, a definer function callable by
 `authenticated`: ten glyphs from a 31-glyph alphabet with no 0/O/1/I/L, shown
 as `XXXXX-XXXXX`, drawn from `gen_random_bytes` with rejection sampling, about
-10^15 possibilities, expiring after 30 days by default. `invite_status(code)`
+10^15 possibilities, expiring after 30 days — the server's own constant since
+SOL-70, not a caller-supplied argument PostgREST would otherwise pass through
+as-is. `invite_status(code)`
 is the one thing `anon` may call — the sign-up form asks it before creating
 anything, so each failure gets its own sentence — and answers exactly one of
 `valid`, `not_found`, `redeemed` or `expired`, never a row. RLS on the table is
@@ -417,9 +419,11 @@ these — so in `public`, any signed-in user could ask "has alice blocked bob?"
 in a single request, which is exactly what silent blocking forbids. A function
 in `private` is callable from a policy and from nowhere else; `authenticated`
 has `usage` on the schema and `execute` on the functions, `anon` has neither.
-The `can_view_post()` family lives there too. Trigger functions stay in
-`public` with `execute` revoked, as `handle_new_user` does — a trigger needs
-no callers.
+The `can_view_post()` family lives there too, and so does
+`image_is_referenced()` (SOL-69) — moved from `public`, where a direct
+default grant had left it callable by `anon` even after its own migration
+revoked `execute` from `public`. Trigger functions stay in `public` with
+`execute` revoked, as `handle_new_user` does — a trigger needs no callers.
 
 Usernames are stored lowercase. The trigger lowercases and trims what the
 metadata carries, and a CHECK constraint enforces `^[a-z0-9_]{3,30}$`; because
@@ -462,13 +466,18 @@ here, readable by nobody through the API — not even the reporter — and by th
 project owner in the SQL editor: `select * from reports order by created_at
 desc`. That is a known pre-launch state, not an oversight. A report always
 names a person (`reported_profile_id`, filled from the post's author by a
-trigger when a post is named, so the report outlives the post — which is `on
-delete set null`) and optionally the post; `about_post` remembers which kind
-it was once the post is gone, so the one-report-per-person uniqueness cannot
-collide with an old post report and make deleting a post fail. Insert-only
-RLS: the reporter is the caller, and a reported post must pass
-`can_view_post()` for them, so the table cannot be used to probe post ids. A
-repeat report is refused by a partial unique index, which `ReportService`
+trigger when a post is named) and optionally the post; both foreign keys are
+`on delete set null`, so a report outlives its post and, since SOL-82, the
+reported account too — abuse history should not be erasable by the account
+it is about, and before SOL-45's moderation dashboard exists that account has
+no other reason to delete itself. `about_post` remembers which kind a report
+was once its post is gone, so the one-report-per-person uniqueness cannot
+collide with an old post report and make deleting a post fail. A post id
+that resolves to nothing refuses the same way a hidden one does (SOL-82),
+so the table still cannot be used to tell "doesn't exist" apart from "exists
+but hidden". Insert-only RLS: the reporter is the caller, and a reported post
+must pass
+`can_view_post()` for them. A repeat report is refused by a partial unique index, which `ReportService`
 treats as success. Reporting is silent to the reported account, and the sheet
 offers a block right after, since the reporter usually wants the content gone
 from their own view now.
@@ -498,7 +507,7 @@ the sanitised database error is now reported as a failed creation whose username
 *may* have been taken, rather than asserted as taken — that assertion used to
 turn every server-side failure into a report of a user mistake.
 
-RLS is enabled on all four tables, and the read policies are where the
+RLS is enabled on all seven tables, and the read policies are where the
 product's premise lives. A `posts` row is readable only when
 `private.can_view_post(viewer, author, visibility)` says so — see below. A
 `profiles` row is readable unless its owner has blocked you; the person who
@@ -528,6 +537,20 @@ On
 follower — you can unfollow someone, you cannot remove one of your followers —
 the insert is refused across a block in either direction, and there is no
 update policy, since nothing on an edge can change.
+
+Row scoping alone left every column of a row you could reach writable, not
+just the ones the app sends: Supabase's default privileges grant `anon` and
+`authenticated` every table privilege on every table in `public`, and until
+SOL-68 nothing narrowed that further. A migration adds column-level grants on
+top: `authenticated` may update only `profiles.username` (not
+`invite_quota`, which the project owner raises by hand in the SQL editor);
+insert only `(user_id, image_path, caption, visibility)` on `posts`,
+`(follower_id, followee_id)` on `follows`, `(blocker_id, blocked_id)` on
+`blocks`, and `(reporter_id, reported_profile_id, reported_post_id, reason,
+details)` on `reports` — every `id`, every `created_at`, and a report's own
+`status` are the server's alone. `anon` holds no table privilege at all now
+(RLS already denied it everything; the grants said so), and `mutuals` is
+`select`-only rather than carrying the same default DML grant as a table.
 
 `can_view_post()` is the one place the visibility rule lives. For a viewer
 looking at a post: the author always; otherwise only if the viewer follows the
@@ -577,7 +600,8 @@ only). Objects are laid out as `{user_id}/{uuid}.jpg`, and the insert policy
 requires the first path segment to equal the caller's `auth.uid()`, so nobody can
 write into another user's folder. A delete policy is scoped the same way, and
 further requires the object to be **unreferenced** — no `posts` row may still
-point at it, checked via a `security definer` `image_is_referenced()` helper
+point at it, checked via a `security definer` `private.image_is_referenced()`
+helper (moved from `public` in SOL-69, so `anon` cannot call it as an RPC)
 that stays exact now that reads are narrowed to the follow graph. The client uses it
 to take back an upload whose post row failed to be written, to remove a
 deleted post's image (SOL-38), and in account deletion — see below. Deleting

@@ -103,6 +103,9 @@ struct ReportService {
 
     private func file(_ report: NewReport) async throws {
         do {
+            // No `Prefer: return=representation` — reports has no select
+            // policy to answer one with, and this insert only needs to know
+            // whether it succeeded (SOL-68).
             try await client.from("reports").insert(report).execute()
         } catch {
             if Self.isRepeat(error) { return }

@@ -35,7 +35,11 @@
 -- names reserved 90 days except from their owner, old handles resolve), and
 -- search from SOL-39 (25: the view omits you, your blocks and your blockers),
 -- and reports from SOL-42 (26: insert-only, only what you could see, filled
--- from the post, a repeat refused, unreadable, surviving the post).
+-- from the post, a repeat refused, unreadable, surviving the post — and,
+-- since SOL-82, surviving the reported account too, and refusing a
+-- nonexistent post the same way as a hidden one). Since SOL-68, column
+-- grants (27): the quota, feed order and a report's own status are all
+-- server-only now, while an ordinary write within your own row still works.
 
 begin;
 
@@ -579,6 +583,39 @@ begin
     select count(*) into n from public.posts where user_id = alice;
     assert n = 2, format('case 17: alice should have 2 posts left, has %s', n);
 
+    -- 27: column grants (SOL-68). Table-level grants gave every authenticated
+    -- user every privilege on every column of a row RLS let them touch at
+    -- all; only row scoping ever narrowed it. This is the behavioural half —
+    -- an attempted write refused; the Exposure block below asserts the
+    -- grants themselves. Placed here, before case 26 deletes alice's
+    -- account, so alice is still a normal profile for the reports check.
+    perform pg_temp.act_as(bob);
+    begin
+        update public.profiles set invite_quota = 99 where id = bob;
+        raise exception 'case 27: bob raised his own invite quota';
+    exception when insufficient_privilege then
+        null;
+    end;
+    begin
+        insert into public.posts (user_id, image_path, visibility, created_at)
+        values (bob, bob::text || '/' || gen_random_uuid()::text || '.jpg', 'followers', now() + interval '10 years');
+        raise exception 'case 27: bob dated his own post ten years into the future';
+    exception when insufficient_privilege then
+        null;
+    end;
+    perform pg_temp.act_as(carol);
+    begin
+        insert into public.reports (reporter_id, reported_profile_id, reason, status)
+        values (carol, alice, 'spam', 'actioned');
+        raise exception 'case 27: carol pre-marked her own report actioned';
+    exception when insufficient_privilege then
+        null;
+    end;
+    perform pg_temp.act_as(bob);
+    update public.profiles set username = 'bob_renamed' where id = bob;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 27: bob should still be able to rename himself, updated %s row(s)', n);
+
     -- 26: reports (SOL-42). Insert-only, and only what the reporter could see:
     -- the reporter is the caller, a reported post must pass can_view_post(),
     -- the person is filled from the post, a repeat is a unique violation the
@@ -605,6 +642,17 @@ begin
         begin
             insert into public.reports (reporter_id, reported_profile_id, reported_post_id, reason) values (carol, bob, v_hidden, 'spam');
             raise exception 'case 26: carol reported a post she cannot see';
+        exception when insufficient_privilege then
+            null;
+        end;
+        begin
+            -- SOL-82: a post id that matches nothing refuses exactly like a
+            -- hidden one (42501, not the old foreign_key_violation) — the
+            -- table cannot be used to tell "doesn't exist" apart from
+            -- "exists but hidden".
+            insert into public.reports (reporter_id, reported_profile_id, reported_post_id, reason)
+            values (carol, bob, gen_random_uuid(), 'spam');
+            raise exception 'case 26: carol reported a nonexistent post';
         exception when insufficient_privilege then
             null;
         end;
@@ -653,6 +701,16 @@ begin
             'case 26: the report should outlive the post, about the person';
         assert not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'reports' and cmd <> 'INSERT'),
             'structure: reports must have insert policies only';
+
+        -- SOL-82: reports outlive the reported account, not just the
+        -- reported post. reported_profile_id is `on delete set null` now
+        -- (was cascade); deleting alice the way auth.users itself is torn
+        -- down (see seed.sql) must null it on both of carol's reports about
+        -- her rather than deleting the rows.
+        delete from auth.users where id = alice;
+        select count(*) into n from public.reports
+        where reporter_id = carol and reported_profile_id is null;
+        assert n = 2, format('case 26: both of carol''s reports about alice should survive with reported_profile_id null, has %s', n);
     end;
 
     -- Exposure: the rule is callable from policies, and from nowhere the API
@@ -676,9 +734,9 @@ begin
         'exposure: authenticated cannot execute follow_counts';
     assert has_function_privilege('anon', 'public.invite_status(text)', 'execute'),
         'exposure: anon cannot execute invite_status, so the sign-up form cannot check a code';
-    assert not has_function_privilege('anon', 'public.create_invite(interval)', 'execute'),
+    assert not has_function_privilege('anon', 'public.create_invite()', 'execute'),
         'exposure: anon can execute create_invite';
-    assert has_function_privilege('authenticated', 'public.create_invite(interval)', 'execute'),
+    assert has_function_privilege('authenticated', 'public.create_invite()', 'execute'),
         'exposure: authenticated cannot execute create_invite';
     assert not has_function_privilege('anon', 'public.handle_new_user()', 'execute'),
         'exposure: anon can execute handle_new_user';
@@ -694,6 +752,32 @@ begin
         'exposure: anon can execute fill_reported_profile';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
+
+    -- SOL-69: image_is_referenced() moved to private; anon never gets it,
+    -- and the old public copy is gone rather than left as a dangling name.
+    assert not has_function_privilege('anon', 'private.image_is_referenced(text)', 'execute'),
+        'exposure: anon can execute image_is_referenced';
+    assert has_function_privilege('authenticated', 'private.image_is_referenced(text)', 'execute'),
+        'exposure: authenticated cannot execute image_is_referenced';
+    assert not exists (
+        select 1 from pg_proc where proname = 'image_is_referenced' and pronamespace = 'public'::regnamespace
+    ), 'exposure: image_is_referenced still has a copy in public';
+
+    -- SOL-68: the column-level grants that replaced "every column in your
+    -- own row is writable". Case 27 demonstrates the same facts as refused
+    -- writes rather than asserted privileges.
+    assert not has_column_privilege('authenticated', 'public.profiles', 'invite_quota', 'UPDATE'),
+        'exposure: authenticated can still update profiles.invite_quota';
+    assert has_column_privilege('authenticated', 'public.profiles', 'username', 'UPDATE'),
+        'exposure: authenticated lost update on profiles.username';
+    assert not has_column_privilege('authenticated', 'public.posts', 'created_at', 'INSERT'),
+        'exposure: authenticated can still insert posts.created_at';
+    assert not has_column_privilege('authenticated', 'public.reports', 'status', 'INSERT'),
+        'exposure: authenticated can still insert reports.status';
+    assert not has_table_privilege('anon', 'public.posts', 'SELECT'),
+        'exposure: anon still holds a table-level grant on posts';
+    assert not has_table_privilege('authenticated', 'public.mutuals', 'INSERT'),
+        'exposure: authenticated can still write to the mutuals view';
 
     -- Structure: the two keyset indexes the feed and the profile grid page on.
     assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'posts_created_at_id_idx'),
