@@ -14,6 +14,12 @@ import UIKit
 /// not remembered, so the next appearance retries. `NSCache` evicts under
 /// memory pressure on its own; the cost limit keeps a long scroll from holding
 /// every decoded image at once.
+///
+/// Two keyspaces share that limit: full images under the path, and grid
+/// thumbnails under `path#side` (see `thumbnail(for:from:side:)`). A profile
+/// grid asks for the second, because a cell about 130 pt wide drawing a
+/// 1600 px upload was decoding a bitmap roughly sixteen times the area it
+/// draws — a page of twenty filled the whole cache and evicted itself.
 final class ImageCache: @unchecked Sendable {
     enum LoadError: Error {
         case badResponse
@@ -43,6 +49,79 @@ final class ImageCache: @unchecked Sendable {
     /// will show it next, and the image is already here.
     func store(_ image: UIImage, for path: String) {
         cache.setObject(image, forKey: path as NSString, cost: Self.cost(of: image))
+    }
+
+    /// The cached thumbnail for `path` at `side`, if it is already here —
+    /// synchronous, for the same first-frame reason as `cachedImage`.
+    func cachedThumbnail(for path: String, side: CGFloat) -> UIImage? {
+        cache.object(forKey: Self.thumbnailKey(path, side) as NSString)
+    }
+
+    /// The image for `path` scaled so its *shorter* edge is `side` pixels —
+    /// what a square grid cell needs, since the cell clips whatever overflows
+    /// it (`contentMode: .fill`). Capping the longer edge instead would hand
+    /// the cell an image too small to cover it, and the upscale to fill would
+    /// undo the point of thumbnailing.
+    ///
+    /// The full image is fetched through `image(for:from:)`, so an in-flight
+    /// download is shared with whatever else wants that path, and a photo
+    /// already on screen at full size costs nothing here. It is then *kept*
+    /// alongside the thumbnail rather than dropped: tapping a cell opens
+    /// `PostDetailView`, which wants exactly that image, and the cost limit
+    /// already evicts under pressure. The two sit under different keys and are
+    /// charged separately.
+    func thumbnail(for path: String, from url: URL, side: CGFloat) async throws -> UIImage {
+        if let cached = cachedThumbnail(for: path, side: side) {
+            return cached
+        }
+        let full = try await image(for: path, from: url)
+        let thumbnail = Self.scaledToShorterEdge(full, side: side)
+        cache.setObject(
+            thumbnail,
+            forKey: Self.thumbnailKey(path, side) as NSString,
+            cost: Self.cost(of: thumbnail)
+        )
+        return thumbnail
+    }
+
+    /// Thumbnails share one `NSCache` with full images, so the key has to say
+    /// which it is and at what size. A storage path is `{uuid}/{uuid}.jpg`
+    /// (see `StorageService`), so `#` cannot occur in one and the two
+    /// keyspaces cannot collide.
+    private static func thumbnailKey(_ path: String, _ side: CGFloat) -> String {
+        "\(path)#\(Int(side.rounded()))"
+    }
+
+    /// Redraws so the shorter edge is `side` pixels, keeping the aspect ratio.
+    ///
+    /// The sibling of `StorageService.downscaled`, which caps the *longer*
+    /// edge because an upload wants to fit inside a bound; a grid cell wants
+    /// to fill one. An image whose shorter edge is already within `side` comes
+    /// back untouched — enlarging it would cost memory and add no detail.
+    static func scaledToShorterEdge(_ image: UIImage, side: CGFloat) -> UIImage {
+        // `size` is in points; multiply by `scale` to reason in real pixels.
+        let pixelSize = CGSize(
+            width: image.size.width * image.scale,
+            height: image.size.height * image.scale
+        )
+
+        let shorterEdge = min(pixelSize.width, pixelSize.height)
+        guard shorterEdge > side else { return image }
+
+        let ratio = side / shorterEdge
+        let target = CGSize(
+            width: max(1, (pixelSize.width * ratio).rounded()),
+            height: max(1, (pixelSize.height * ratio).rounded())
+        )
+
+        // scale = 1 so the output is exactly `target` pixels rather than
+        // `target` multiplied by the device's screen scale.
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
     }
 
     /// The image for `path`: from the cache, or else downloaded from `url`,

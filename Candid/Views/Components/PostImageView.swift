@@ -30,6 +30,13 @@ struct PostImageView: View {
     /// square already has a size.
     let placeholderMinHeight: CGFloat
 
+    /// When set, the image is decoded and cached at this size — pixels on the
+    /// shorter edge, which is what a square cell needs to cover itself — via
+    /// `ImageCache.thumbnail(for:from:side:)`. The profile grid sets it; the
+    /// feed row and the detail view leave it nil and get the full image, which
+    /// is what they draw.
+    let thumbnailSide: CGFloat?
+
     /// Passed in rather than read from `@Environment(\.services)`: a cache
     /// hit has to render in the very first frame, in `init`, and environment
     /// values are not readable there.
@@ -49,6 +56,7 @@ struct PostImageView: View {
         accessibilityLabel: String,
         contentMode: ContentMode = .fit,
         placeholderMinHeight: CGFloat = 200,
+        thumbnailSide: CGFloat? = nil,
         imageCache: ImageCache
     ) {
         self.path = path
@@ -56,10 +64,22 @@ struct PostImageView: View {
         self.accessibilityLabel = accessibilityLabel
         self.contentMode = contentMode
         self.placeholderMinHeight = placeholderMinHeight
+        self.thumbnailSide = thumbnailSide
         self.imageCache = imageCache
+
+        // Look in the keyspace this view will actually draw from: a cached
+        // full image is no use to a grid cell that wants the thumbnail, since
+        // showing it would be the oversized decode all over again.
+        let cached: UIImage?
+        if let thumbnailSide {
+            cached = imageCache.cachedThumbnail(for: path, side: thumbnailSide)
+        } else {
+            cached = imageCache.cachedImage(for: path)
+        }
+
         // A cache hit renders in the first frame; anything else starts as a
         // spinner and resolves in `load()`.
-        if let cached = imageCache.cachedImage(for: path) {
+        if let cached {
             _phase = State(initialValue: .loaded(cached))
         } else {
             _phase = State(initialValue: url == nil ? .missing : .loading)
@@ -103,7 +123,12 @@ struct PostImageView: View {
             return
         }
         do {
-            let image = try await imageCache.image(for: path, from: url)
+            let image: UIImage
+            if let thumbnailSide {
+                image = try await imageCache.thumbnail(for: path, from: url, side: thumbnailSide)
+            } else {
+                image = try await imageCache.image(for: path, from: url)
+            }
             phase = .loaded(image)
         } catch {
             // Not on cancellation: the row scrolled away before the bytes

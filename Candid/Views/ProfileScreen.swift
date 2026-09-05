@@ -82,6 +82,16 @@ struct ProfileScreen: View {
 
     private static let pageSize = FeedService.defaultLimit
 
+    /// Pixels on the shorter edge of a grid thumbnail (SOL-80). Three columns
+    /// across the widest current iPhone is a cell of about 145 pt, so 436 px
+    /// at 3×; 450 covers every size without measuring the cell at runtime,
+    /// which would mean laying the grid out once before knowing what to
+    /// fetch. Uploads are 1600 px on the long edge
+    /// (`StorageService.maxDimension`), so this is roughly a sixteenth of the
+    /// bitmap a cell used to decode. An iPad's larger cells will upscale it
+    /// slightly; measuring the cell is the fix if that ever matters.
+    private static let thumbnailSide: CGFloat = 450
+
     private var columns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
     }
@@ -334,6 +344,7 @@ struct ProfileScreen: View {
                         accessibilityLabel: post.caption ?? "Photo by \(post.username)",
                         contentMode: .fill,
                         placeholderMinHeight: 0,
+                        thumbnailSide: Self.thumbnailSide,
                         imageCache: services.imageCache
                     )
                 }
