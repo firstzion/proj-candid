@@ -83,17 +83,21 @@ offline to the Log In screen — and then bounced them back into the app when th
 auto-refresh eventually got through. One `ProfileScreen` serves every profile,
 yours and everyone else's (SOL-37): username, three counts — posts, followers,
 following — and a three-column grid of the person's posts, paginated like the
-feed and opening into `PostDetailView`. Your own adds a "Find people" lookup by
-exact username — current or former — plus Edit Username, Invites, Log Out and
-Delete Account; someone else's — from that lookup,
-from tapping a username in the feed, or from a follower list — shows where you
+feed and opening into `PostDetailView`. Your own adds Edit Username, Invites,
+Log Out and Delete Account; someone else's — from a search result on the People
+tab, from tapping a username in the feed, or from a follower list — shows where you
 stand (following, follows you, friends, blocked) with Follow/Unfollow and
 Block/Unblock; every control changes immediately and changes back with a
 message if the request fails. The post count and the grid are read under RLS,
 so they are the posts *you* can see; the two follow counts are public, and
-open into `FollowListView` only on your own profile or a mutual's. The
-lookup answers "No one by that name" for a typo, a name nobody has, and
-someone who has blocked you alike — deliberately, since a block is silent.
+open into `FollowListView` only on your own profile or a mutual's. The People
+tab is where discovery lives (SOL-39, under the SOL-43 decision): a search
+field with a debounced prefix match on current usernames, two characters or
+more, whose results open profiles, plus "Invite a friend". Results never
+include you, anyone you have blocked, or anyone who has blocked you — a
+blocker's account is simply absent rather than marked, since a block is
+silent — and a whole former handle with no match falls back to the exact
+lookup and shows who it belongs to now.
 
 ## Requirements
 
@@ -159,7 +163,9 @@ follow lists and the grid's author scope are pinned alongside the requests
 they extend. `InviteServiceTests` and `AuthServiceSignUpTests` pin the invite
 calls and the gate: a code that is not valid stops the sign-up before any
 request but the status check, and a valid one travels in the sign-up
-metadata. All of them build their client with `TestSupabaseClient` in
+metadata. `ProfileServiceSearchTests` pins the prefix request — normalised,
+`_` escaped, capped — and the inputs answered empty without one. All of them
+build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
 The authorization rule itself is tested in SQL, not Swift.
@@ -177,7 +183,8 @@ admitted and made mutual for a valid one, and the quota holding at five; and
 the username rules — one change a month with the date in the refusal, a
 released name reserved from others but not from its owner, a sign-up refused
 for a cooling-down name, and an old handle resolving to the current profile
-except for someone the owner has blocked.
+except for someone the owner has blocked; and search, whose view omits you,
+your blocks and your blockers.
 Everything it touches is rolled back. Run it against the hosted
 project after a push and a seed run:
 
@@ -207,7 +214,7 @@ Candid/
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView,
-                      InvitesView, EditUsernameSheet
+                      InvitesView, EditUsernameSheet, PeopleView (the People tab)
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -421,6 +428,16 @@ feed shows the current name (it joins `profiles`; posts follow the person, not
 the string), and search (SOL-39) matches current names only, with the
 exact-handle fallback for old ones. The trade-off: a rename does not hide you
 from someone who knew the old handle; blocking is the tool for that.
+
+Search (SOL-39) reads `searchable_profiles`, a `security_invoker` view over
+`profiles` that leaves out the caller and anyone the caller has blocked;
+running under the profiles policy, it also omits anyone who blocked the
+caller, so both directions of a block are excluded with one rule and the view
+exposes nothing but `id` and `username`. `profiles_username_pattern_idx`
+(`text_pattern_ops`) serves the prefix match that the unique index cannot
+under the project's `en_US` collation. `ProfileService.search(prefix:limit:)`
+asks for two characters or more of username characters only, escapes `_`, and
+caps at 20 rows.
 
 Before creating the auth user, sign-up also asks `username_available(text)`
 whether the name is still free. The person asking has no session yet and

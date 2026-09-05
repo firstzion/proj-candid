@@ -98,6 +98,34 @@ struct ProfileService {
         }
     }
 
+    /// Prefix search over current usernames, through `searchable_profiles`
+    /// (SOL-39). The view leaves out the caller and the caller's blocks and
+    /// runs under the profiles policy, which hides anyone who blocked the
+    /// caller — so both directions of a block are excluded without this
+    /// method knowing. Two characters or more, and only characters a username
+    /// can hold: anything else could match nothing and is answered empty
+    /// without a request. `_` is a LIKE wildcard and is escaped so it means
+    /// itself. Current names only; `profile(username:)` answers a former
+    /// handle typed in full.
+    func search(prefix: String, limit: Int = 20) async throws -> [Profile] {
+        let prefix = UsernameRules.normalized(prefix)
+        guard prefix.count >= 2, UsernameRules.hasOnlyAllowedCharacters(prefix) else { return [] }
+        let pattern = prefix.replacingOccurrences(of: "_", with: #"\_"#) + "%"
+
+        do {
+            return try await client
+                .from("searchable_profiles")
+                .select()
+                .like("username", pattern: pattern)
+                .order("username")
+                .limit(limit)
+                .execute()
+                .value
+        } catch {
+            throw Self.mapProfileError(error)
+        }
+    }
+
     /// Whether `username` can be claimed right now, through
     /// `username_available` — which since SOL-41 also says no to a name
     /// someone else released in the last 90 days, and yes to one the caller

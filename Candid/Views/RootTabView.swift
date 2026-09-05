@@ -13,6 +13,11 @@ struct RootTabView: View {
                     Label("Post", systemImage: "plus.square")
                 }
 
+            PeopleView()
+                .tabItem {
+                    Label("People", systemImage: "person.2")
+                }
+
             ProfileTab()
                 .tabItem {
                     Label("Profile", systemImage: "person.crop.circle")

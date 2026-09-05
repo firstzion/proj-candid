@@ -23,6 +23,13 @@ enum UsernameRules {
         raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    /// Whether every character is one a username can hold — the character
+    /// class alone, without the length rule, which is what a search prefix
+    /// (SOL-39) has to satisfy: "al" is a fine prefix and an impossible name.
+    static func hasOnlyAllowedCharacters(_ text: String) -> Bool {
+        text.unicodeScalars.allSatisfy(allowedScalars.contains)
+    }
+
     /// Nil when `username` — already normalised — is valid; otherwise a
     /// sentence a person can act on. Characters are checked before length so
     /// the message names the real problem: "élodie" hears about the accent,

@@ -32,7 +32,8 @@
 -- (19-23: one enum value to the world, own rows only, the gate refuses and
 -- rolls back, a good code admits and befriends, the quota holds), and
 -- changeable usernames from SOL-41 (24: one change per 30 days, released
--- names reserved 90 days except from their owner, old handles resolve).
+-- names reserved 90 days except from their owner, old handles resolve), and
+-- search from SOL-39 (25: the view omits you, your blocks and your blockers).
 
 begin;
 
@@ -504,6 +505,37 @@ begin
     perform pg_temp.act_as_owner();
     delete from public.blocks where blocker_id = alice and blocked_id = judy;
 
+    -- 25: search (SOL-39). searchable_profiles leaves out the caller and the
+    -- caller's blocks, and runs under the profiles policy, which hides anyone
+    -- who blocked the caller — so dave and erin never see each other, from
+    -- either seat, and nobody is a result of their own search. Exact names
+    -- rather than prefixes here, since real accounts share the table.
+    perform pg_temp.act_as(erin);
+    select count(*) into n from public.searchable_profiles where username = 'dave';
+    assert n = 0, format('case 25: erin (blocked by dave) must not find dave, finds %s', n);
+    perform pg_temp.act_as(dave);
+    select count(*) into n from public.searchable_profiles where username = 'erin';
+    assert n = 0, format('case 25: dave must not find erin, whom he blocked, finds %s', n);
+    select count(*) into n from public.searchable_profiles where username = 'dave';
+    assert n = 0, format('case 25: dave must not find himself, finds %s', n);
+    perform pg_temp.act_as(carol);
+    assert exists (select 1 from public.searchable_profiles where username like 'ali%' and id = alice),
+        'case 25: carol should find alice by prefix';
+    select count(*) into n from public.searchable_profiles where username = 'carol';
+    assert n = 0, format('case 25: carol must not find herself, finds %s', n);
+    select count(*) into n from public.searchable_profiles where username = 'dave';
+    assert n = 1, format('case 25: carol should find dave, whom nobody involved has blocked, finds %s', n);
+    select count(*) into n from public.searchable_profiles where username = 'erin';
+    assert n = 1, format('case 25: carol should find erin too, finds %s', n);
+    perform pg_temp.act_as_anon();
+    begin
+        select count(*) into n from public.searchable_profiles;
+        assert n = 0, format('case 25: anon must get nothing from the view, gets %s', n);
+    exception when insufficient_privilege then
+        null;
+    end;
+    perform pg_temp.act_as_owner();
+
     -- 10: breaking mutuality takes effect at once — bob's mutuals post leaves
     -- alice's view the moment bob stops following her, while his followers
     -- posts stay, since alice still follows him.
@@ -590,6 +622,8 @@ begin
         'structure: posts_user_id_created_at_id_idx is missing';
     assert not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'posts_user_id_created_at_idx'),
         'structure: the old per-author index posts_user_id_created_at_idx should be gone';
+    assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'profiles_username_pattern_idx'),
+        'structure: profiles_username_pattern_idx is missing, so a prefix search is a scan';
 end;
 $$;
 

@@ -2,12 +2,11 @@ import SwiftUI
 
 /// A person's profile — yours or anyone else's. One screen, switching on "is
 /// this me": the header, the three counts and the grid are the same for
-/// everyone; only the action row differs. Your own has the "Find people"
-/// lookup (until the People tab, SOL-39), Edit Username (SOL-41), Invites
-/// (SOL-63), Log Out and Delete Account; anyone else's has
+/// everyone; only the action row differs. Your own has Edit Username
+/// (SOL-41), Invites (SOL-63), Log Out and Delete Account; anyone else's has
 /// Follow/Unfollow and Block/Unblock, with Report (SOL-42) to come. Reached
-/// from the Profile tab, a username in the feed, the lookup, or a follower
-/// list.
+/// from the Profile tab, a username in the feed, a search result on the
+/// People tab, or a follower list.
 ///
 /// Nothing here decides what may be seen. The post count and the grid are
 /// read under RLS, so they are "the posts you can see" — all of them for the
@@ -65,14 +64,8 @@ struct ProfileScreen: View {
     @State private var isConfirmingDeleteAccount = false
     @State private var isDeletingAccount = false
 
-    /// "Find people", on your own profile until the People tab exists.
-    @State private var lookupUsername = ""
-    @State private var isLookingUp = false
-    @State private var lookupMessage: FormMessage?
-
     @State private var listKind: FollowListView.Kind?
     @State private var selectedPost: FeedPost?
-    @State private var selectedProfile: Profile?
     @State private var postToDelete: FeedPost?
     @State private var isConfirmingDelete = false
 
@@ -124,9 +117,6 @@ struct ProfileScreen: View {
         }
         .navigationDestination(item: $selectedPost) { post in
             PostDetailView(post: post)
-        }
-        .navigationDestination(item: $selectedProfile) { person in
-            ProfileScreen(profile: person)
         }
         .task(id: profile.id) { await load() }
         .onChange(of: feedInvalidation.version) {
@@ -226,7 +216,6 @@ struct ProfileScreen: View {
     private var actions: some View {
         if isSelf {
             VStack(alignment: .leading, spacing: 12) {
-                findPeople
                 Button("Edit Username") { isEditingUsername = true }
                 NavigationLink {
                     InvitesView()
@@ -257,42 +246,6 @@ struct ProfileScreen: View {
             .disabled(isChanging)
             .padding(.horizontal)
         }
-    }
-
-    /// Lookup by exact username — the way to reach a stranger while there is
-    /// no search (SOL-39). Someone who has blocked you is hidden by the
-    /// profiles read policy and answers exactly like a typo.
-    private var findPeople: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Find people")
-                .font(.headline)
-
-            HStack {
-                TextField("Username", text: $lookupUsername)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onSubmit {
-                        guard canLookUp else { return }
-                        Task { await lookUp() }
-                    }
-
-                AsyncSubmitButton("Find", isSubmitting: isLookingUp, isEnabled: canLookUp) {
-                    await lookUp()
-                }
-            }
-
-            if let lookupMessage {
-                Text(lookupMessage.text)
-                    .font(.footnote)
-                    .foregroundStyle(lookupMessage.kind == .failure ? Color.red : Color.secondary)
-            }
-        }
-    }
-
-    private var canLookUp: Bool {
-        !UsernameRules.normalized(lookupUsername).isEmpty
     }
 
     // MARK: - Grid
@@ -515,7 +468,7 @@ struct ProfileScreen: View {
         }
     }
 
-    // MARK: - Your own posts, lookup and account
+    // MARK: - Your own posts and account
 
     /// Row first, then object, in `PostService.deletePost`; here the cell
     /// leaves the grid and the count drops, and the feed is marked stale so
@@ -528,24 +481,6 @@ struct ProfileScreen: View {
             feedInvalidation.markStale()
         } catch {
             message = .failure(error.localizedDescription)
-        }
-    }
-
-    private func lookUp() async {
-        isLookingUp = true
-        lookupMessage = nil
-        defer { isLookingUp = false }
-
-        do {
-            if let found = try await services!.profile.profile(username: lookupUsername) {
-                selectedProfile = found
-            } else {
-                // A typo, a name nobody has, or someone who has blocked you —
-                // deliberately the same answer for all three.
-                lookupMessage = .notice("No one by that name.")
-            }
-        } catch {
-            lookupMessage = .failure(error.localizedDescription)
         }
     }
 
