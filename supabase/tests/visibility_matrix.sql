@@ -689,6 +689,22 @@ begin
         exception when insufficient_privilege then
             null;
         end;
+        begin
+            -- A report has to be about something. SOL-82 made
+            -- reported_profile_id nullable for the on-delete cascade, which
+            -- let a raw client file a report with neither target: the
+            -- policy short-circuits on a null post, reports_not_self is not
+            -- false against NULL, and both partial unique indexes treat NULL
+            -- as distinct. fill_reported_profile() refuses it on insert
+            -- (20260905160000); the cascade, an UPDATE, never meets that
+            -- check — the SOL-82 assertion at the end of this case, which
+            -- deletes alice and expects both reports to survive with null
+            -- targets, is the proof that a CHECK here would have broken.
+            insert into public.reports (reporter_id, reason) values (carol, 'other');
+            raise exception 'case 26: carol filed a report about nothing';
+        exception when check_violation then
+            null;
+        end;
         select count(*) into n from public.reports;
         assert n = 0, format('case 26: the reporter must not read reports, reads %s', n);
         perform pg_temp.act_as(alice);

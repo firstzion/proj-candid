@@ -205,8 +205,8 @@ released name reserved from others but not from its owner, a sign-up refused
 for a cooling-down name, and an old handle resolving to the current profile
 except for someone the owner has blocked; search, whose view omits you, your
 blocks and your blockers; and reports — insert-only, only what the reporter
-could see, a repeat refused, unreadable to everyone, surviving the post's
-deletion.
+could see, a repeat refused, one about nothing refused, unreadable to
+everyone, surviving the post's deletion and the reported account's.
 Everything it touches is rolled back. CI (`.github/workflows/ci.yml`,
 `schema` job) runs it on every push to `main`, against migrations and seed data applied
 fresh to a throwaway database via `supabase start` and `supabase db reset` —
@@ -492,7 +492,11 @@ was once its post is gone, so the one-report-per-person uniqueness cannot
 collide with an old post report and make deleting a post fail. A post id
 that resolves to nothing refuses the same way a hidden one does (SOL-82),
 so the table still cannot be used to tell "doesn't exist" apart from "exists
-but hidden". Insert-only RLS: the reporter is the caller, and a reported post
+but hidden". A report naming neither a post nor a person is refused by the
+same trigger — a raw-client path the nullable column opened, closed in
+`20260905160000`, and deliberately a trigger guard rather than a CHECK:
+the set-null cascades are UPDATEs, and a CHECK would fire on them and fail
+the very deletions they exist to allow. Insert-only RLS: the reporter is the caller, and a reported post
 must pass
 `can_view_post()` for them. A repeat report is refused by a partial unique index, which `ReportService`
 treats as success. Reporting is silent to the reported account, and the sheet
