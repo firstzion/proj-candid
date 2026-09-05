@@ -45,11 +45,8 @@ struct FeedView: View {
     @State private var actionError: String?
     @State private var isShowingActionError = false
 
-    /// Another person's post being reported (SOL-42), and — once it is — the
-    /// account it was about, so a block can be offered.
+    /// Another person's post being reported (SOL-42).
     @State private var reportTarget: ReportSheet.Target?
-    @State private var reportedProfile: Profile?
-    @State private var isOfferingBlock = false
 
     private enum Phase {
         case loading
@@ -127,39 +124,16 @@ struct FeedView: View {
             .navigationDestination(item: $selectedProfile) { profile in
                 ProfileScreen(profile: profile)
             }
-            .confirmationDialog(
-                "Delete this post?",
-                isPresented: $isConfirmingDelete,
-                titleVisibility: .visible,
-                presenting: postToDelete
-            ) { post in
-                Button("Delete Post", role: .destructive) {
-                    Task { await delete(post) }
-                }
-            } message: { _ in
-                Text("The photo is removed for everyone who could see it. This can't be undone.")
+            .deletePostConfirmation($postToDelete, isPresented: $isConfirmingDelete) { post in
+                Task { await delete(post) }
             }
             .alert("Something Went Wrong", isPresented: $isShowingActionError) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(actionError ?? "")
             }
-            .sheet(item: $reportTarget) { target in
-                ReportSheet(target: target) { person in
-                    reportedProfile = person
-                    isOfferingBlock = true
-                }
-            }
-            .confirmationDialog(
-                "Reported. Block them too?",
-                isPresented: $isOfferingBlock,
-                titleVisibility: .visible,
-                presenting: reportedProfile
-            ) { person in
-                Button("Block @\(person.username)", role: .destructive) { Task { await block(person) } }
-                Button("Not Now", role: .cancel) {}
-            } message: { _ in
-                Text("No review queue exists yet, so blocking is how to stop seeing their posts now. You won't see each other's posts, and any follow between you ends. They won't be told.")
+            .reportAndBlockFlow(target: $reportTarget) { person in
+                await block(person)
             }
             .task {
                 // Runs every time the tab is shown; only fetch when there is

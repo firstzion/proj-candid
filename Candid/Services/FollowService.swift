@@ -335,18 +335,13 @@ struct FollowService {
         (error as? PostgrestError)?.code == "23505"
     }
 
-    /// Same rule as the other services: only a genuinely missing session
-    /// means not signed in. See `ProfileService.mapSessionError`.
     static func mapSessionError(_ error: Error) -> FollowError {
-        if let authError = error as? AuthError, authError.errorCode == .sessionNotFound {
-            return .notSignedIn
-        }
-        return .other(error.localizedDescription)
+        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
     }
 
     static func mapFollowError(_ error: Error) -> FollowError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(error.localizedDescription)
+            return .other(serverMessage(of: error))
         }
 
         switch postgrestError.code ?? "" {
@@ -366,9 +361,7 @@ struct FollowService {
             if postgrestError.message.lowercased().contains("row-level security") {
                 return .notPermitted
             }
-            // PostgrestError is a plain Error, so localizedDescription would
-            // be Foundation boilerplate. Use the server's message.
-            return .other(postgrestError.message)
+            return .other(serverMessage(of: error))
         }
     }
 }

@@ -222,22 +222,13 @@ struct ProfileService {
         }
     }
 
-    /// Distinguishes "nobody is signed in" from "signed in, but the session
-    /// could not be refreshed just now" — typically no network. Both used to
-    /// come out as `.notSignedIn`, contradicting the tabs the person was
-    /// looking at. Only a genuinely missing session means not signed in; that
-    /// includes one the server has revoked, which the SDK reports the same way
-    /// after clearing it locally.
     static func mapSessionError(_ error: Error) -> ProfileError {
-        if let authError = error as? AuthError, authError.errorCode == .sessionNotFound {
-            return .notSignedIn
-        }
-        return .other(error.localizedDescription)
+        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
     }
 
     static func mapProfileError(_ error: Error) -> ProfileError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(error.localizedDescription)
+            return .other(serverMessage(of: error))
         }
 
         // PostgREST returns PGRST116 when `.single()` matches no rows, which
@@ -247,10 +238,7 @@ struct ProfileService {
             return .profileMissing
         }
 
-        // PostgrestError does not conform to LocalizedError, so its
-        // localizedDescription is a generic bridged string with none of the
-        // server's detail in it. Use the server's own message.
-        return .other(postgrestError.message)
+        return .other(serverMessage(of: error))
     }
 
     /// Permanently deletes the signed-in user's account: the `auth.users` row

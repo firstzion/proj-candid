@@ -101,13 +101,7 @@ struct FeedService {
     }
 
     static func mapFeedError(_ error: Error) -> FeedServiceError {
-        guard let postgrestError = error as? PostgrestError else {
-            return .other(error.localizedDescription)
-        }
-        // PostgrestError does not conform to LocalizedError, so its
-        // localizedDescription is generic Foundation boilerplate. Use the
-        // server's own message.
-        return .other(postgrestError.message)
+        .other(serverMessage(of: error))
     }
 }
 

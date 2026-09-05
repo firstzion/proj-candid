@@ -156,20 +156,13 @@ struct PostService {
         }
     }
 
-    /// A missing session — including one the server has revoked, which the SDK
-    /// reports the same way — means not signed in. A session that merely failed
-    /// to refresh, typically for want of a network, does not, and says so in
-    /// its own words instead. See `ProfileService.mapSessionError`.
     static func mapSessionError(_ error: Error) -> PostError {
-        if let authError = error as? AuthError, authError.errorCode == .sessionNotFound {
-            return .notSignedIn
-        }
-        return .other(error.localizedDescription)
+        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
     }
 
     static func mapPostError(_ error: Error) -> PostError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(error.localizedDescription)
+            return .other(serverMessage(of: error))
         }
 
         // 42501 is Postgres' insufficient_privilege, which is how an RLS
@@ -180,9 +173,7 @@ struct PostService {
             return .notPermitted(postgrestError.message)
         }
 
-        // PostgrestError is a plain Error, so localizedDescription would be
-        // Foundation boilerplate. Use the server's message.
-        return .other(postgrestError.message)
+        return .other(serverMessage(of: error))
     }
 }
 

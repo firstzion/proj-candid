@@ -107,11 +107,8 @@ struct StorageService {
     }
 
     static func mapStorageError(_ error: Error) -> StorageServiceError {
-        // StorageError, like PostgrestError, is a plain Error rather than a
-        // LocalizedError, so its localizedDescription is generic Foundation
-        // boilerplate with none of the server's detail. Read `message`.
         guard let storageError = error as? StorageError else {
-            return .other(error.localizedDescription)
+            return .other(serverMessage(of: error))
         }
 
         if storageError.statusCode == "403"
@@ -119,7 +116,7 @@ struct StorageService {
             return .notPermitted(storageError.message)
         }
 
-        return .other(storageError.message)
+        return .other(serverMessage(of: error))
     }
 
     static func jpegData(for image: UIImage) -> Data? {

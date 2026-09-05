@@ -19,8 +19,6 @@ struct PostDetailView: View {
     @State private var deleteError: String?
 
     @State private var reportTarget: ReportSheet.Target?
-    @State private var reportedProfile: Profile?
-    @State private var isOfferingBlock = false
 
     private var isOwn: Bool { sessionStore.currentUserID == post.authorID }
 
@@ -80,31 +78,11 @@ struct PostDetailView: View {
                 }
             }
         }
-        .sheet(item: $reportTarget) { target in
-            ReportSheet(target: target) { person in
-                reportedProfile = person
-                isOfferingBlock = true
-            }
+        .reportAndBlockFlow(target: $reportTarget) { person in
+            await block(person)
         }
-        .confirmationDialog(
-            "Reported. Block them too?",
-            isPresented: $isOfferingBlock,
-            titleVisibility: .visible,
-            presenting: reportedProfile
-        ) { person in
-            Button("Block @\(person.username)", role: .destructive) { Task { await block(person) } }
-            Button("Not Now", role: .cancel) {}
-        } message: { _ in
-            Text("No review queue exists yet, so blocking is how to stop seeing their posts now. You won't see each other's posts, and any follow between you ends. They won't be told.")
-        }
-        .confirmationDialog(
-            "Delete this post?",
-            isPresented: $isConfirmingDelete,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Post", role: .destructive) { Task { await delete() } }
-        } message: {
-            Text("The photo is removed for everyone who could see it. This can't be undone.")
+        .deletePostConfirmation(.constant(post), isPresented: $isConfirmingDelete) { _ in
+            Task { await delete() }
         }
     }
 

@@ -125,15 +125,12 @@ struct InviteService {
     }
 
     static func mapSessionError(_ error: Error) -> InviteError {
-        if let authError = error as? AuthError, authError.errorCode == .sessionNotFound {
-            return .notSignedIn
-        }
-        return .other(error.localizedDescription)
+        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
     }
 
     static func mapError(_ error: Error) -> InviteError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(error.localizedDescription)
+            return .other(serverMessage(of: error))
         }
         // create_invite() raises check_violation with this exact message.
         if postgrestError.code == "23514" && postgrestError.message.contains("invite quota reached") {
@@ -142,9 +139,7 @@ struct InviteService {
         if postgrestError.message == "not signed in" {
             return .notSignedIn
         }
-        // PostgrestError is a plain Error; its localizedDescription is
-        // boilerplate. Use the server's message.
-        return .other(postgrestError.message)
+        return .other(serverMessage(of: error))
     }
 }
 

@@ -221,10 +221,9 @@ struct AuthService {
         let message = error.localizedDescription
 
         // From the availability pre-check, which speaks PostgREST rather than
-        // GoTrue. PostgrestError is not a LocalizedError, so its
-        // localizedDescription is Foundation boilerplate; use the server's own.
-        if let postgrestError = error as? PostgrestError {
-            return .other(postgrestError.message)
+        // GoTrue.
+        if error is PostgrestError {
+            return .other(serverMessage(of: error))
         }
 
         guard let authError = error as? AuthError else {

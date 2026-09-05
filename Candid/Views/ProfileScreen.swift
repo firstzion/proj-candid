@@ -61,9 +61,9 @@ struct ProfileScreen: View {
     @State private var message: FormMessage?
     @State private var isConfirmingBlock = false
 
-    /// Reporting this person (SOL-42), and the block offered once it is done.
+    /// Reporting this person (SOL-42); the block offered once it is done is
+    /// handled by `reportAndBlockFlow`.
     @State private var reportTarget: ReportSheet.Target?
-    @State private var isOfferingBlock = false
 
     @State private var isSigningOut = false
     @State private var isConfirmingDeleteAccount = false
@@ -134,24 +134,8 @@ struct ProfileScreen: View {
                 feedInvalidation.markStale()
             }
         }
-        .sheet(item: $reportTarget) { target in
-            ReportSheet(target: target) { _ in
-                // No review queue exists yet, so the reporter usually wants
-                // the content gone from their own view now.
-                if relationship?.blocking != true {
-                    isOfferingBlock = true
-                }
-            }
-        }
-        .confirmationDialog(
-            "Reported. Block @\(displayedUsername) too?",
-            isPresented: $isOfferingBlock,
-            titleVisibility: .visible
-        ) {
-            Button("Block", role: .destructive) { Task { await block() } }
-            Button("Not Now", role: .cancel) {}
-        } message: {
-            Text("You won't see each other's posts, and any follow between you ends. They won't be told.")
+        .reportAndBlockFlow(target: $reportTarget, offerBlock: relationship?.blocking != true) { _ in
+            await block()
         }
         .navigationDestination(item: $listKind) { kind in
             FollowListView(profile: profile, kind: kind)
@@ -174,15 +158,8 @@ struct ProfileScreen: View {
         } message: {
             Text("You won't see each other's posts, and any follow between you ends. They won't be told.")
         }
-        .confirmationDialog(
-            "Delete this post?",
-            isPresented: $isConfirmingDelete,
-            titleVisibility: .visible,
-            presenting: postToDelete
-        ) { post in
-            Button("Delete Post", role: .destructive) { Task { await delete(post) } }
-        } message: { _ in
-            Text("The photo is removed for everyone who could see it. This can't be undone.")
+        .deletePostConfirmation($postToDelete, isPresented: $isConfirmingDelete) { post in
+            Task { await delete(post) }
         }
         .confirmationDialog(
             "Delete your account?",
