@@ -1,7 +1,15 @@
 -- Multi-account test data (SOL-26).
 --
--- Not migration history — this is fixture data, run on demand against the
--- hosted project rather than applied once. Idempotent: every run deletes and
+-- Local and CI only — never against the hosted project. Every account below
+-- shares one password, printed further down in this same file, so anyone who
+-- can read this repo can sign in as any of them; that was fine while the repo
+-- was private and became a launch-blocking problem the moment it wasn't
+-- (SOL-86). The hosted project is production — SOL-35 (a separate dev
+-- project) was declined as unneeded overhead for a solo project, so
+-- production is the only hosted project there is. `supabase start`/`db
+-- reset` applies this automatically ([db.seed] in config.toml), which is all
+-- this file is for now: the throwaway local database, and the schema job in
+-- CI. Not migration history — fixture data, idempotent: every run deletes and
 -- recreates everything it owns, scoped by the @seed.candid.test email suffix,
 -- so re-running never accumulates duplicates and touches nothing else.
 --
@@ -10,14 +18,9 @@
 -- That also means signing up with them through the app's own UI would fail
 -- GoTrue's email validation; this script writes directly into auth.users and
 -- auth.identities instead, the same rows a real sign-up would produce, which
--- is why it needs to run with database-owner privileges (the Dashboard SQL
--- Editor and a direct/CLI connection both have this; the app's publishable
--- key does not, and could not run this).
---
--- Run it:
---   * Dashboard: SQL Editor → paste this file → Run
---   * CLI:       supabase db query --linked -f supabase/seed.sql
---                (or: psql "$(supabase db url --linked)" -f supabase/seed.sql)
+-- is why it needs to run with database-owner privileges (the local database
+-- and CI both give the process that; the app's publishable key does not, and
+-- could not run this).
 --
 -- All ten accounts share one password: CandidSeed123!  (14 characters,
 -- clears the 10-character minimum in config.toml). Usernames are the account

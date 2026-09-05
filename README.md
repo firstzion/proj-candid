@@ -801,16 +801,15 @@ own UI anyway (GoTrue's sign-up validates deliverability); the script writes
 directly into `auth.users`/`auth.identities` instead, the same rows a real
 sign-up produces.
 
-Run it with database-owner privileges — the publishable key the app uses
-cannot do this, by design:
-
-```bash
-supabase db query --linked -f supabase/seed.sql
-```
-
-or paste the file into the Dashboard's SQL Editor. It's idempotent: every run
-deletes and recreates everything scoped to the `@seed.candid.test` suffix
-first, so re-running never accumulates duplicates.
+**Local and CI only — never against the hosted project.** All ten accounts
+share one password, printed in the file itself, so running this against
+hosted makes those accounts a public login the moment the repo is (SOL-86);
+the hosted project is production, not a separate dev project (SOL-35,
+declined). `supabase start`/`db reset` applies it automatically against the
+throwaway local database — that and CI's `schema` job are the only things
+that run it now. It's idempotent: every run deletes and recreates everything
+scoped to the `@seed.candid.test` suffix first, so re-running never
+accumulates duplicates.
 
 The follow graph is seeded too: alice ↔ bob (the one mutual pair, so
 `mutuals` returns exactly two rows), carol → alice and ivan → alice (one-way),
