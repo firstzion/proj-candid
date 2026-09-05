@@ -1,5 +1,10 @@
 import SwiftUI
 
+/// Presentation state only (SOL-77) — which dialog or alert is up, which
+/// profile a tapped username navigates to. `FeedModel` owns loading and every
+/// mutation; this view keeps the `scenePhase` and `FeedInvalidation`
+/// observations, since those are about *when* to reload, not what a reload
+/// does.
 struct FeedView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.services) private var services
@@ -7,17 +12,10 @@ struct FeedView: View {
     @EnvironmentObject private var sessionStore: SessionStore
     @Environment(TabSelection.self) private var tabSelection
 
-    /// The posts, and everything about paging through them (SOL-71) — shared
-    /// with the profile grid so the two cannot drift again.
-    ///
     /// Built in `.task` rather than `init`: it needs `services`, and
     /// environment values are not readable there. Nil only until the tab is
     /// first shown.
-    @State private var paged: PagedPosts?
-
-    /// Which of the two empties an empty feed is (SOL-40), decided after a
-    /// refresh that came back with nothing; nil while that is being decided.
-    @State private var feedEmptyState: EmptyState?
+    @State private var model: FeedModel?
 
     /// The author whose username was just tapped; non-nil pushes their
     /// profile. One of two ways to reach someone from inside the app, and the
@@ -36,11 +34,6 @@ struct FeedView: View {
     /// Another person's post being reported (SOL-42).
     @State private var reportTarget: ReportSheet.Target?
 
-    /// Posts per page. Each page costs two round trips — the rows, then their
-    /// signed URLs — so this is the service's default rather than the value of
-    /// 8 that had been left in from verifying pagination by hand.
-    private static let pageSize = FeedService.defaultLimit
-
     /// How old the feed may get before it refreshes itself. Half the signed
     /// URL lifetime, so images are swapped for fresh URLs well before the
     /// current ones expire — rather than every photo on screen turning into a
@@ -50,8 +43,8 @@ struct FeedView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let paged {
-                    content(for: paged)
+                if let model {
+                    content(for: model)
                 } else {
                     ProgressView()
                 }
@@ -74,18 +67,18 @@ struct FeedView: View {
             .task {
                 // Runs every time the tab is shown; only fetch when there is
                 // nothing on screen or what's there has gone stale.
-                let model = paged ?? makePaged()
-                guard model.posts.isEmpty || model.isStale(after: Self.staleAfter) else { return }
-                await refresh(model)
+                let feedModel = model ?? makeModel()
+                guard feedModel.paged.posts.isEmpty || feedModel.paged.isStale(after: Self.staleAfter) else { return }
+                await feedModel.refresh()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 // Returning from the background after a long absence is how
                 // the feed usually goes stale — and `.task` does not re-run
                 // for that, only for the tab appearing.
                 guard newPhase == .active,
-                      let paged,
-                      paged.isStale(after: Self.staleAfter) else { return }
-                Task { await refresh(paged) }
+                      let model,
+                      model.paged.isStale(after: Self.staleAfter) else { return }
+                Task { await model.refresh() }
             }
             .onChange(of: feedInvalidation.version) {
                 // A post just succeeded, or the graph just changed — a
@@ -93,20 +86,20 @@ struct FeedView: View {
                 // staleness: the person expects to see the result now, not up
                 // to half an hour from now, and `refresh` replaces the list,
                 // so rows that are no longer permitted leave with it.
-                guard let paged else { return }
-                Task { await refresh(paged) }
+                guard let model else { return }
+                Task { await model.refresh() }
             }
         }
     }
 
     @ViewBuilder
-    private func content(for paged: PagedPosts) -> some View {
-        switch paged.phase {
+    private func content(for model: FeedModel) -> some View {
+        switch model.paged.phase {
         case .loading:
             ProgressView()
 
-        case .loaded where paged.posts.isEmpty:
-            if let feedEmptyState {
+        case .loaded where model.paged.posts.isEmpty:
+            if let feedEmptyState = model.feedEmptyState {
                 EmptyStateView(state: feedEmptyState) { tabSelection.selected = .people }
             } else {
                 ProgressView()
@@ -114,19 +107,19 @@ struct FeedView: View {
 
         case .loaded:
             List {
-                ForEach(paged.posts) { post in
+                ForEach(model.paged.posts) { post in
                     feedRow(for: post)
                         .onAppear {
-                            if post.id == paged.posts.last?.id {
-                                Task { await paged.loadMore() }
+                            if post.id == model.paged.posts.last?.id {
+                                Task { await model.paged.loadMore() }
                             }
                         }
                 }
 
-                LoadMoreFooter(paged: paged)
+                LoadMoreFooter(paged: model.paged)
             }
             .listStyle(.plain)
-            .refreshable { await refresh(paged) }
+            .refreshable { await model.refresh() }
 
         case .failed(let message):
             ContentUnavailableView {
@@ -134,38 +127,15 @@ struct FeedView: View {
             } description: {
                 Text(message)
             } actions: {
-                Button("Try Again") { Task { await refresh(paged) } }
+                Button("Try Again") { Task { await model.refresh() } }
             }
         }
     }
 
-    private func makePaged() -> PagedPosts {
-        let model = PagedPosts(source: services.feed, pageSize: Self.pageSize)
-        paged = model
-        return model
-    }
-
-    /// The newest page, replacing the feed — see `PagedPosts.refresh()` for
-    /// why it replaces rather than merges. The only thing that belongs here
-    /// rather than in the model is which empty an empty feed is.
-    private func refresh(_ paged: PagedPosts) async {
-        guard let page = await paged.refresh() else { return }
-        if page.posts.isEmpty {
-            feedEmptyState = await decidedEmptyState()
-        } else {
-            feedEmptyState = nil
-        }
-    }
-
-    /// Two different empties, told apart by one number (SOL-40). Following
-    /// nobody is what you see after unfollowing everyone — under invite-only
-    /// onboarding a new account arrives with a friend — and it points to the
-    /// People tab; following people who haven't posted is not a problem to
-    /// solve, so it just says so. If the count itself fails, "nothing yet" is
-    /// the safer wrong answer: it prompts nothing.
-    private func decidedEmptyState() async -> EmptyState {
-        let count = (try? await services.follow.followingCount()) ?? 1
-        return count == 0 ? .feedFollowingNobody : .feedNothingYet
+    private func makeModel() -> FeedModel {
+        let feedModel = FeedModel(services: services)
+        model = feedModel
+        return feedModel
     }
 
     /// One row, plus its long-press menu: Delete on your own posts (SOL-38),
@@ -197,36 +167,16 @@ struct FeedView: View {
         }
     }
 
-    /// The follow-up a report offers: the same block the profile makes. The
-    /// database severs any follow and hides both sides from each other; the
-    /// refresh that follows takes their posts out of the list.
     private func block(_ person: Profile) async {
-        do {
-            try await services.follow.block(person.id)
-            feedInvalidation.markStale()
-        } catch {
-            actionError = error.localizedDescription
-            isShowingActionError = true
-        }
+        guard let model, let error = await model.block(person, feedInvalidation: feedInvalidation) else { return }
+        actionError = error
+        isShowingActionError = true
     }
 
-    /// Removes the post from the list at once, then asks the server. On
-    /// failure the row comes back where it was, with a message. On success
-    /// the feed is marked stale as well, so the next refresh — and the
-    /// profile grid — comes from the server rather than from a local edit.
-    /// Other viewers lose the post at their next refresh, the same window
-    /// every graph change already has.
     private func delete(_ post: FeedPost) async {
-        guard let paged else { return }
-        let index = paged.remove(id: post.id)
-        do {
-            try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
-            feedInvalidation.markStale()
-        } catch {
-            paged.insert(post, at: index)
-            actionError = error.localizedDescription
-            isShowingActionError = true
-        }
+        guard let model, let error = await model.delete(post, feedInvalidation: feedInvalidation) else { return }
+        actionError = error
+        isShowingActionError = true
     }
 }
 

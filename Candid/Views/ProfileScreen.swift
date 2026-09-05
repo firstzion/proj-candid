@@ -24,17 +24,15 @@ import SwiftUI
 /// fails. Every success marks the feed stale (`FeedInvalidation`), which also
 /// reloads this screen — counts and grid come back from the server rather
 /// than from a local edit.
+///
+/// This view holds presentation state only (SOL-77) — which dialog or sheet
+/// is up, which post is selected. `ProfileModel` owns loading and every
+/// mutation, which is what makes that logic reachable from a test.
 struct ProfileScreen: View {
     let profile: Profile
 
-    /// The username as it is now: `profile.username` at first, then whatever
-    /// Edit Username changed it to, so the screen never shows a stale name.
-    @State private var displayedUsername: String
-    @State private var isEditingUsername = false
-
     init(profile: Profile) {
         self.profile = profile
-        _displayedUsername = State(initialValue: profile.username)
     }
 
     @Environment(\.services) private var services
@@ -42,35 +40,23 @@ struct ProfileScreen: View {
     @Environment(TabSelection.self) private var tabSelection
     @EnvironmentObject private var sessionStore: SessionStore
 
-    /// Nil until loaded; only for someone else's profile.
-    @State private var relationship: Relationship?
-    @State private var relationshipError: String?
-    @State private var followCounts: FollowCounts?
-    @State private var postCount: Int?
+    /// Built in `.task` rather than `init`, since it needs `services` and
+    /// `sessionStore`, neither available there.
+    @State private var model: ProfileModel?
 
-    /// This person's posts, and everything about paging through them
-    /// (SOL-71) — the same model the feed uses, scoped to one author. Built
-    /// in `.task` rather than `init`, since it needs `services`.
-    @State private var paged: PagedPosts?
-
-    @State private var isChanging = false
-    @State private var message: FormMessage?
+    @State private var isEditingUsername = false
     @State private var isConfirmingBlock = false
 
     /// Reporting this person (SOL-42); the block offered once it is done is
     /// handled by `reportAndBlockFlow`.
     @State private var reportTarget: ReportSheet.Target?
 
-    @State private var isSigningOut = false
     @State private var isConfirmingDeleteAccount = false
-    @State private var isDeletingAccount = false
 
     @State private var listKind: FollowListView.Kind?
     @State private var selectedPost: FeedPost?
     @State private var postToDelete: FeedPost?
     @State private var isConfirmingDelete = false
-
-    private static let pageSize = FeedService.defaultLimit
 
     /// Pixels on the shorter edge of a grid thumbnail (SOL-80). Three columns
     /// across the widest current iPhone is a cell of about 145 pt, so 436 px
@@ -86,16 +72,9 @@ struct ProfileScreen: View {
         Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
     }
 
-    private var isSelf: Bool { sessionStore.currentUserID == profile.id }
-
-    /// The lists open only where RLS would let them be read.
-    private var canOpenLists: Bool { isSelf || relationship?.isMutual == true }
-
-    private var isBlocking: Bool { relationship?.blocking == true }
-
     @ViewBuilder
     private var messageLine: some View {
-        if let message {
+        if let message = model?.message {
             Text(message.text)
                 .font(.footnote)
                 .foregroundStyle(message.kind == .failure ? Color.red : Color.secondary)
@@ -107,13 +86,13 @@ struct ProfileScreen: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 header
-                if isBlocking {
+                if model?.isBlocking == true {
                     // Reachable only by the blocker — the profiles policy hides
                     // the blocker from the blocked — and there is nothing to
                     // count or show: Unblock, in `actions`, is the way back.
                     actions
                     messageLine
-                    EmptyStateView(state: .blockedProfile(username: displayedUsername))
+                    EmptyStateView(state: .blockedProfile(username: model?.displayedUsername ?? profile.username))
                         .frame(maxWidth: .infinity)
                 } else {
                     countsRow
@@ -124,18 +103,15 @@ struct ProfileScreen: View {
             }
             .padding(.vertical)
         }
-        .navigationTitle(displayedUsername)
+        .navigationTitle(model?.displayedUsername ?? profile.username)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isEditingUsername) {
-            EditUsernameSheet(currentUsername: displayedUsername) { newName in
-                displayedUsername = newName
-                // Posts follow the person, not the string: the feed joins
-                // profiles, so a refresh shows the new name on old posts.
-                feedInvalidation.markStale()
+            EditUsernameSheet(currentUsername: model?.displayedUsername ?? profile.username) { newName in
+                model?.usernameChanged(to: newName, feedInvalidation: feedInvalidation)
             }
         }
-        .reportAndBlockFlow(target: $reportTarget, offerBlock: relationship?.blocking != true) { _ in
-            await block()
+        .reportAndBlockFlow(target: $reportTarget, offerBlock: model?.isBlocking != true) { _ in
+            await model?.block(feedInvalidation: feedInvalidation)
         }
         .navigationDestination(item: $listKind) { kind in
             FollowListView(profile: profile, kind: kind)
@@ -143,30 +119,30 @@ struct ProfileScreen: View {
         .navigationDestination(item: $selectedPost) { post in
             PostDetailView(post: post)
         }
-        .task(id: profile.id) { await load(pagedPosts(for: profile.id)) }
+        .task(id: profile.id) { await model(for: profile.id).load() }
         .onChange(of: feedInvalidation.version) {
             // Something changed what the server would hand back — a post, a
             // follow, a block, a delete, here or elsewhere. Reload all of it.
-            Task { await load(pagedPosts(for: profile.id)) }
+            Task { await model(for: profile.id).load() }
         }
         .confirmationDialog(
             "Block \(profile.username)?",
             isPresented: $isConfirmingBlock,
             titleVisibility: .visible
         ) {
-            Button("Block", role: .destructive) { Task { await block() } }
+            Button("Block", role: .destructive) { Task { await model?.block(feedInvalidation: feedInvalidation) } }
         } message: {
             Text("You won't see each other's posts, and any follow between you ends. They won't be told.")
         }
         .deletePostConfirmation($postToDelete, isPresented: $isConfirmingDelete) { post in
-            Task { await delete(post) }
+            Task { await model?.delete(post, feedInvalidation: feedInvalidation) }
         }
         .confirmationDialog(
             "Delete your account?",
             isPresented: $isConfirmingDeleteAccount,
             titleVisibility: .visible
         ) {
-            Button("Delete Account", role: .destructive) { Task { await deleteAccount() } }
+            Button("Delete Account", role: .destructive) { Task { await model?.deleteAccount(sessionStore) } }
         } message: {
             Text("This permanently deletes your account and every photo you've posted. This can't be undone.")
         }
@@ -176,22 +152,22 @@ struct ProfileScreen: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(displayedUsername)
+            Text(model?.displayedUsername ?? profile.username)
                 .font(.title2)
 
-            if isSelf {
+            if model?.isSelf == true {
                 if case .signedIn(_, let email) = sessionStore.state, let email {
                     Text(email)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-            } else if let relationship {
-                Text(Self.summary(of: relationship))
+            } else if let relationship = model?.relationship {
+                Text(ProfileModel.summary(of: relationship))
                     .foregroundStyle(.secondary)
-            } else if let relationshipError {
+            } else if let relationshipError = model?.relationshipError {
                 Text(relationshipError)
                     .foregroundStyle(.red)
-                Button("Try Again") { Task { await loadRelationship() } }
+                Button("Try Again") { Task { await model(for: profile.id).load() } }
             } else {
                 ProgressView()
             }
@@ -203,15 +179,15 @@ struct ProfileScreen: View {
     /// the lists behind them can be read; elsewhere they are numbers, dimmed.
     private var countsRow: some View {
         HStack(spacing: 28) {
-            countCell(postCount, "posts", isEnabled: true)
+            countCell(model?.postCount, "posts", isEnabled: true)
             Button { listKind = .followers } label: {
-                countCell(followCounts?.followers, "followers", isEnabled: canOpenLists)
+                countCell(model?.followCounts?.followers, "followers", isEnabled: model?.canOpenLists == true)
             }
-            .disabled(!canOpenLists)
+            .disabled(model?.canOpenLists != true)
             Button { listKind = .following } label: {
-                countCell(followCounts?.following, "following", isEnabled: canOpenLists)
+                countCell(model?.followCounts?.following, "following", isEnabled: model?.canOpenLists == true)
             }
-            .disabled(!canOpenLists)
+            .disabled(model?.canOpenLists != true)
         }
         .buttonStyle(.plain)
         .padding(.horizontal)
@@ -232,7 +208,7 @@ struct ProfileScreen: View {
 
     @ViewBuilder
     private var actions: some View {
-        if isSelf {
+        if model?.isSelf == true {
             VStack(alignment: .leading, spacing: 12) {
                 Button("Edit Username") { isEditingUsername = true }
                 NavigationLink {
@@ -240,29 +216,29 @@ struct ProfileScreen: View {
                 } label: {
                     Label("Invites", systemImage: "envelope")
                 }
-                Button("Log Out") { Task { await signOut() } }
-                    .disabled(isSigningOut)
+                Button("Log Out") { Task { await model?.signOut(sessionStore) } }
+                    .disabled(model?.isSigningOut == true)
                 Button("Delete Account", role: .destructive) { isConfirmingDeleteAccount = true }
-                    .disabled(isDeletingAccount)
-                if isDeletingAccount {
+                    .disabled(model?.isDeletingAccount == true)
+                if model?.isDeletingAccount == true {
                     ProgressView()
                 }
             }
             .padding(.horizontal)
-        } else if let relationship {
+        } else if let relationship = model?.relationship {
             HStack(spacing: 16) {
                 if relationship.blocking {
-                    Button("Unblock") { Task { await unblock() } }
+                    Button("Unblock") { Task { await model?.unblock(feedInvalidation: feedInvalidation) } }
                 } else {
                     Button(relationship.following ? "Unfollow" : "Follow") {
-                        Task { await toggleFollow() }
+                        Task { await model?.toggleFollow(feedInvalidation: feedInvalidation) }
                     }
                     Button("Block", role: .destructive) { isConfirmingBlock = true }
                 }
                 Button("Report…") { reportTarget = .profile(profile) }
             }
             .buttonStyle(.bordered)
-            .disabled(isChanging)
+            .disabled(model?.isChanging == true)
             .padding(.horizontal)
         }
     }
@@ -271,8 +247,8 @@ struct ProfileScreen: View {
 
     @ViewBuilder
     private var grid: some View {
-        if let paged {
-            switch paged.phase {
+        if let model {
+            switch model.paged.phase {
             case .loading:
                 ProgressView()
                     .frame(maxWidth: .infinity)
@@ -283,13 +259,13 @@ struct ProfileScreen: View {
                     Text(error)
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
-                    Button("Try Again") { Task { await paged.refresh() } }
+                    Button("Try Again") { Task { await model.paged.refresh() } }
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
 
-            case .loaded where paged.posts.isEmpty:
-                if isSelf {
+            case .loaded where model.paged.posts.isEmpty:
+                if model.isSelf {
                     EmptyStateView(state: .ownProfileNoPosts) { tabSelection.selected = .post }
                         .frame(maxWidth: .infinity)
                 } else {
@@ -302,18 +278,18 @@ struct ProfileScreen: View {
 
             case .loaded:
                 LazyVGrid(columns: columns, spacing: 2) {
-                    ForEach(paged.posts) { post in
-                        gridCell(for: post)
+                    ForEach(model.paged.posts) { post in
+                        gridCell(for: post, isSelf: model.isSelf)
                             .onAppear {
-                                if post.id == paged.posts.last?.id {
-                                    Task { await paged.loadMore() }
+                                if post.id == model.paged.posts.last?.id {
+                                    Task { await model.paged.loadMore() }
                                 }
                             }
                     }
                 }
                 // A failed page used to land in `message` with nothing to tap;
                 // the footer the feed already had is now shared (SOL-71).
-                LoadMoreFooter(paged: paged)
+                LoadMoreFooter(paged: model.paged)
             }
         } else {
             ProgressView()
@@ -325,7 +301,7 @@ struct ProfileScreen: View {
     /// A square cell that opens the post. Your own cells carry the same
     /// long-press Delete the feed row has (SOL-38).
     @ViewBuilder
-    private func gridCell(for post: FeedPost) -> some View {
+    private func gridCell(for post: FeedPost, isSelf: Bool) -> some View {
         let cell = Button {
             selectedPost = post
         } label: {
@@ -363,160 +339,14 @@ struct ProfileScreen: View {
 
     // MARK: - Loading
 
-    /// The grid's model, made once and reused — unless the screen is now
+    /// The screen's model, made once and reused — unless the screen is now
     /// showing someone else, in which case the model it has is the wrong
-    /// person's list and a fresh one is built.
-    private func pagedPosts(for profileID: UUID) -> PagedPosts {
-        if let paged, paged.authorID == profileID { return paged }
-        let model = PagedPosts(source: services.feed, authorID: profileID, pageSize: Self.pageSize)
-        paged = model
-        return model
-    }
-
-    /// Everything the screen shows, at once; each piece reports its own
-    /// failure. Also what runs again whenever the feed is marked stale.
-    private func load(_ paged: PagedPosts) async {
-        let relationshipLoad = Task { await loadRelationship() }
-        let countsLoad = Task { await loadCounts() }
-        await paged.refresh()
-        await relationshipLoad.value
-        await countsLoad.value
-    }
-
-    private func loadRelationship() async {
-        guard !isSelf else { return }
-        relationshipError = nil
-        do {
-            relationship = try await services.follow.relationship(with: profile.id)
-        } catch {
-            relationshipError = error.localizedDescription
-        }
-    }
-
-    private func loadCounts() async {
-        do {
-            followCounts = try await services.follow.counts(for: profile.id)
-            postCount = try await services.profile.postCount(for: profile.id)
-        } catch {
-            message = .failure(error.localizedDescription)
-        }
-    }
-
-    // MARK: - Follow and block
-
-    /// The relationship in the app's words. "Friends" is a mutual follow —
-    /// the same derivation as the `mutuals` view, on the two rows that matter.
-    static func summary(of relationship: Relationship) -> String {
-        if relationship.blocking { return "Blocked" }
-        if relationship.isMutual { return "Friends" }
-        if relationship.following { return "Following" }
-        if relationship.followedBy { return "Follows you" }
-        return "Not following"
-    }
-
-    private func toggleFollow() async {
-        guard let previous = relationship else { return }
-        var optimistic = previous
-        optimistic.following.toggle()
-        let wantsToFollow = optimistic.following
-
-        await change(to: optimistic, rollingBackTo: previous) {
-            if wantsToFollow {
-                try await services.follow.follow(profile.id)
-            } else {
-                try await services.follow.unfollow(profile.id)
-            }
-        }
-    }
-
-    /// A block severs the follow in both directions in the database; the
-    /// optimistic state says so too, rather than waiting to be told.
-    private func block() async {
-        guard let previous = relationship else { return }
-        await change(
-            to: Relationship(following: false, followedBy: false, blocking: true),
-            rollingBackTo: previous
-        ) {
-            try await services.follow.block(profile.id)
-        }
-    }
-
-    /// Unblocking restores nothing — no edge comes back — so the state after
-    /// it is "not following", from scratch.
-    private func unblock() async {
-        guard let previous = relationship else { return }
-        await change(to: .unconnected, rollingBackTo: previous) {
-            try await services.follow.unblock(profile.id)
-        }
-    }
-
-    /// The one shape every action takes: show the intended state, make the
-    /// request, and either mark the feed stale — which reloads this screen
-    /// too — or put the old state back with a message.
-    private func change(
-        to optimistic: Relationship,
-        rollingBackTo previous: Relationship,
-        _ request: () async throws -> Void
-    ) async {
-        message = nil
-        isChanging = true
-        defer { isChanging = false }
-
-        relationship = optimistic
-        do {
-            try await request()
-            feedInvalidation.markStale()
-        } catch {
-            relationship = previous
-            message = .failure(error.localizedDescription)
-        }
-    }
-
-    // MARK: - Your own posts and account
-
-    /// Row first, then object, in `PostService.deletePost`; here the cell
-    /// leaves the grid and the count drops, and the feed is marked stale so
-    /// everything else refetches.
-    private func delete(_ post: FeedPost) async {
-        do {
-            try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
-            paged?.remove(id: post.id)
-            postCount = postCount.map { max(0, $0 - 1) }
-            feedInvalidation.markStale()
-        } catch {
-            message = .failure(error.localizedDescription)
-        }
-    }
-
-    private func signOut() async {
-        isSigningOut = true
-        message = nil
-        defer { isSigningOut = false }
-
-        do {
-            try await sessionStore.signOut()
-        } catch {
-            // The SDK clears the local session before calling the server, so
-            // the app is already signed out; this only reports that the
-            // server-side token revocation did not go through.
-            message = .failure("Signed out on this device, but the server call failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Deletes the account, then signs out through `SessionStore` exactly like
-    /// Log Out — the SDK's auth-state stream carries the app back to the Log
-    /// In screen either way.
-    private func deleteAccount() async {
-        isDeletingAccount = true
-        message = nil
-        defer { isDeletingAccount = false }
-
-        do {
-            try await services.profile.deleteAccount()
-            try await sessionStore.signOut()
-        } catch {
-            message = .failure(error.localizedDescription)
-        }
+    /// person's, and a fresh one is built.
+    private func model(for profileID: UUID) -> ProfileModel {
+        if let model, model.profile.id == profileID { return model }
+        let newModel = ProfileModel(profile: profile, services: services, currentUserID: sessionStore.currentUserID)
+        model = newModel
+        return newModel
     }
 }
 

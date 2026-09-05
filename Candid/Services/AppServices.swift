@@ -17,12 +17,22 @@ struct AppServices {
     let report: ReportService
     let imageCache: ImageCache
 
-    init(client: SupabaseClient, imageCache: ImageCache = ImageCache()) {
+    /// `currentUserID` overrides the default `client.auth.session.user.id`
+    /// look-up on every service that takes it — nil in production, where the
+    /// live session is exactly what should answer. Tests supply a fixed id,
+    /// the same way `FollowServiceTests` and friends inject it directly, so
+    /// `ProfileModelTests`/`FeedModelTests` can drive the real services
+    /// through a bundle built here rather than one field at a time.
+    init(
+        client: SupabaseClient,
+        imageCache: ImageCache = ImageCache(),
+        currentUserID: (@Sendable () async throws -> UUID)? = nil
+    ) {
         auth = AuthService(client: client)
-        profile = ProfileService(client: client)
-        post = PostService(client: client, imageCache: imageCache)
+        profile = ProfileService(client: client, currentUserID: currentUserID)
+        post = PostService(client: client, imageCache: imageCache, currentUserID: currentUserID)
         feed = FeedService(client: client)
-        follow = FollowService(client: client)
+        follow = FollowService(client: client, currentUserID: currentUserID)
         storage = StorageService(client: client)
         invite = InviteService(client: client)
         report = ReportService(client: client)

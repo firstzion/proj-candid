@@ -65,14 +65,18 @@ private final class FakePostsSource: PostsPaging, @unchecked Sendable {
     }
 
     func fetchPosts(by authorID: UUID?, before cursor: FeedCursor?, limit: Int) async throws -> FeedPage {
-        lock.lock()
-        let index = recorded.count
-        recorded.append(Call(authorID: authorID, cursor: cursor, limit: limit))
-        let result: Result<FeedPage, Error> = queued.isEmpty
-            ? .failure(Failure.queueExhausted)
-            : queued.removeFirst()
-        let hold = holds[index]
-        lock.unlock()
+        // Scoped locking rather than a lock()/unlock() pair: plain NSLock
+        // calls are unavailable directly inside an async function, and this
+        // also guarantees the unlock happens before the `await` below rather
+        // than straddling it.
+        let (result, hold): (Result<FeedPage, Error>, (@Sendable () async -> Void)?) = lock.withLock {
+            let index = recorded.count
+            recorded.append(Call(authorID: authorID, cursor: cursor, limit: limit))
+            let result: Result<FeedPage, Error> = queued.isEmpty
+                ? .failure(Failure.queueExhausted)
+                : queued.removeFirst()
+            return (result, holds[index])
+        }
 
         if let hold { await hold() }
         return try result.get()
