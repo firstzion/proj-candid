@@ -15,29 +15,30 @@ struct AppServices {
     let storage: StorageService
     let invite: InviteService
     let report: ReportService
+    let imageCache: ImageCache
 
-    init(client: SupabaseClient) {
+    init(client: SupabaseClient, imageCache: ImageCache = ImageCache()) {
         auth = AuthService(client: client)
         profile = ProfileService(client: client)
-        post = PostService(client: client)
+        post = PostService(client: client, imageCache: imageCache)
         feed = FeedService(client: client)
         follow = FollowService(client: client)
         storage = StorageService(client: client)
         invite = InviteService(client: client)
         report = ReportService(client: client)
+        self.imageCache = imageCache
     }
 }
 
 private struct AppServicesKey: EnvironmentKey {
-    static let defaultValue: AppServices? = nil
+    /// A preview default: every call through it fails gracefully, landing in
+    /// the view's own error state, so a `#Preview` needs no injection.
+    static let defaultValue = AppServices(client: .preview)
 }
 
 extension EnvironmentValues {
-    /// Set once, at the root, by `CandidApp`. Every view under `RootView` can
-    /// rely on this being non-nil — `CandidApp` shows a configuration-error
-    /// screen instead of `RootView` when the client can't be built, so
-    /// nothing that reads this ever renders otherwise.
-    var services: AppServices? {
+    /// Set once, at the root, by `CandidApp`.
+    var services: AppServices {
         get { self[AppServicesKey.self] }
         set { self[AppServicesKey.self] = newValue }
     }

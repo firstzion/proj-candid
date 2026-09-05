@@ -69,7 +69,7 @@ struct LogInView: View {
         do {
             // `services` is set once, at the app root, before `RootView` (and
             // therefore this view) ever renders — see `CandidApp`.
-            try await services!.auth.signIn(email: email, password: password)
+            try await services.auth.signIn(email: email, password: password)
         } catch {
             message = .failure(error.localizedDescription)
         }

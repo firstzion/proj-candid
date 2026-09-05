@@ -67,8 +67,8 @@ struct FollowListView: View {
         loadError = nil
         do {
             people = switch kind {
-            case .followers: try await services!.follow.followers(of: profile.id)
-            case .following: try await services!.follow.following(of: profile.id)
+            case .followers: try await services.follow.followers(of: profile.id)
+            case .following: try await services.follow.following(of: profile.id)
             }
         } catch {
             loadError = error.localizedDescription

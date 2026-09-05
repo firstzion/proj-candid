@@ -28,6 +28,7 @@ enum PostError: LocalizedError {
 
 struct PostService {
     let client: SupabaseClient
+    private let imageCache: ImageCache
 
     /// The signed-in user's id, read fresh for every call.
     ///
@@ -37,8 +38,9 @@ struct PostService {
     /// without a live session, the same arrangement as `FollowService`.
     private let currentUserID: @Sendable () async throws -> UUID
 
-    init(client: SupabaseClient, currentUserID: (@Sendable () async throws -> UUID)? = nil) {
+    init(client: SupabaseClient, imageCache: ImageCache, currentUserID: (@Sendable () async throws -> UUID)? = nil) {
         self.client = client
+        self.imageCache = imageCache
         self.currentUserID = currentUserID ?? { try await client.auth.session.user.id }
     }
 
@@ -96,7 +98,7 @@ struct PostService {
         // is already here: seed the cache so the poster's own post appears
         // without a download. After the insert, so a failed post leaves
         // nothing behind here either.
-        ImageCache.shared.store(image, for: imagePath)
+        imageCache.store(image, for: imagePath)
     }
 
     /// Deletes the post: the row first, then its image.

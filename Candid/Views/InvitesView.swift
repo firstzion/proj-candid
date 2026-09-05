@@ -151,8 +151,8 @@ struct InvitesView: View {
     private func load() async {
         loadError = nil
         do {
-            quota = try await services!.invite.quota()
-            invites = try await services!.invite.mine()
+            quota = try await services.invite.quota()
+            invites = try await services.invite.mine()
         } catch {
             loadError = error.localizedDescription
         }
@@ -165,7 +165,7 @@ struct InvitesView: View {
         message = nil
         defer { isCreating = false }
         do {
-            let invite = try await services!.invite.create()
+            let invite = try await services.invite.create()
             invites = [invite] + (invites ?? [])
         } catch {
             message = .failure(error.localizedDescription)
@@ -178,7 +178,7 @@ struct InvitesView: View {
     private func revoke(_ invite: Invite) async {
         message = nil
         do {
-            try await services!.invite.revoke(code: invite.code)
+            try await services.invite.revoke(code: invite.code)
             invites?.removeAll { $0.id == invite.id }
         } catch {
             message = .failure(error.localizedDescription)

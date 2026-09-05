@@ -38,7 +38,7 @@ struct PostServiceRequestTests {
 
     private static func makeService() -> (PostService, TestSupabaseClient.StubbedClient) {
         let stub = TestSupabaseClient.make()
-        return (PostService(client: stub.client, currentUserID: { Self.me }), stub)
+        return (PostService(client: stub.client, imageCache: ImageCache(), currentUserID: { Self.me }), stub)
     }
 
     @Test("createPost uploads first, then inserts a row carrying the chosen visibility")

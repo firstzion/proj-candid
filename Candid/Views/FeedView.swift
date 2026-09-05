@@ -205,7 +205,7 @@ struct FeedView: View {
     /// are re-fetched as the user scrolls.
     private func refresh() async {
         do {
-            let page = try await services!.feed.fetchPosts(limit: Self.pageSize)
+            let page = try await services.feed.fetchPosts(limit: Self.pageSize)
             generation += 1
             posts = page.posts
             loadedAt = Date()
@@ -235,7 +235,7 @@ struct FeedView: View {
     /// solve, so it just says so. If the count itself fails, "nothing yet" is
     /// the safer wrong answer: it prompts nothing.
     private func decideEmptyState() async {
-        let count = (try? await services!.follow.followingCount()) ?? 1
+        let count = (try? await services.follow.followingCount()) ?? 1
         feedEmptyState = count == 0 ? .feedFollowingNobody : .feedNothingYet
     }
 
@@ -248,7 +248,7 @@ struct FeedView: View {
         let startedIn = generation
         let page: FeedPage
         do {
-            page = try await services!.feed.fetchPosts(before: posts.last?.cursor, limit: Self.pageSize)
+            page = try await services.feed.fetchPosts(before: posts.last?.cursor, limit: Self.pageSize)
         } catch {
             // `reachedEnd` stays false, so the retry row under the posts — or
             // scrolling the last one off and back on, or pulling to refresh —
@@ -300,7 +300,7 @@ struct FeedView: View {
     /// refresh that follows takes their posts out of the list.
     private func block(_ person: Profile) async {
         do {
-            try await services!.follow.block(person.id)
+            try await services.follow.block(person.id)
             feedInvalidation.markStale()
         } catch {
             actionError = error.localizedDescription
@@ -318,7 +318,7 @@ struct FeedView: View {
         let index = posts.firstIndex { $0.id == post.id }
         posts.removeAll { $0.id == post.id }
         do {
-            try await services!.post.deletePost(id: post.id, imagePath: post.imagePath)
+            try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
             feedInvalidation.markStale()
         } catch {
             posts.insert(post, at: min(index ?? posts.count, posts.count))
@@ -344,6 +344,8 @@ private struct FeedPostRow: View {
     /// Opens the author's profile — from the username, or from VoiceOver's
     /// actions rotor, since the row reads as one element.
     let onOpenProfile: () -> Void
+
+    @Environment(\.services) private var services
 
     /// How long a post stays on a relative timestamp before switching to an
     /// absolute date — a post from three months ago reading "12 wk" is not
@@ -380,7 +382,8 @@ private struct FeedPostRow: View {
             PostImageView(
                 path: post.imagePath,
                 url: post.imageURL,
-                accessibilityLabel: post.caption ?? "Photo by \(post.username)"
+                accessibilityLabel: post.caption ?? "Photo by \(post.username)",
+                imageCache: services.imageCache
             )
 
             if let caption = post.caption {

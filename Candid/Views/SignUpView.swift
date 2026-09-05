@@ -90,7 +90,7 @@ struct SignUpView: View {
         message = nil
 
         do {
-            let result = try await services!.auth.signUp(
+            let result = try await services.auth.signUp(
                 email: email,
                 password: password,
                 username: username,

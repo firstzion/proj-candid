@@ -75,7 +75,7 @@ private struct ProfileTab: View {
 
     private func load() async {
         do {
-            phase = .loaded(try await services!.profile.currentProfile())
+            phase = .loaded(try await services.profile.currentProfile())
         } catch {
             phase = .failed(error.localizedDescription)
         }

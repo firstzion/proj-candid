@@ -101,9 +101,9 @@ struct ReportSheet: View {
         do {
             switch target {
             case .post(let post):
-                try await services!.report.report(post: post, reason: reason, details: details)
+                try await services.report.report(post: post, reason: reason, details: details)
             case .profile(let profile):
-                try await services!.report.report(profile: profile, reason: reason, details: details)
+                try await services.report.report(profile: profile, reason: reason, details: details)
             }
             onReported(target.reportedProfile)
             dismiss()

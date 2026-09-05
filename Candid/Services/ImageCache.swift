@@ -15,8 +15,6 @@ import UIKit
 /// memory pressure on its own; the cost limit keeps a long scroll from holding
 /// every decoded image at once.
 final class ImageCache: @unchecked Sendable {
-    static let shared = ImageCache()
-
     enum LoadError: Error {
         case badResponse
         case undecodable

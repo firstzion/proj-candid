@@ -72,11 +72,11 @@ struct EditUsernameSheet: View {
         }
 
         do {
-            guard try await services!.profile.isUsernameAvailable(normalized) else {
+            guard try await services.profile.isUsernameAvailable(normalized) else {
                 message = .failure(ProfileError.usernameTaken.localizedDescription)
                 return
             }
-            try await services!.profile.changeUsername(to: normalized)
+            try await services.profile.changeUsername(to: normalized)
             onChanged(normalized)
             dismiss()
         } catch {

@@ -356,7 +356,8 @@ struct ProfileScreen: View {
                         url: post.imageURL,
                         accessibilityLabel: post.caption ?? "Photo by \(post.username)",
                         contentMode: .fill,
-                        placeholderMinHeight: 0
+                        placeholderMinHeight: 0,
+                        imageCache: services.imageCache
                     )
                 }
                 .clipped()
@@ -394,7 +395,7 @@ struct ProfileScreen: View {
         guard !isSelf else { return }
         relationshipError = nil
         do {
-            relationship = try await services!.follow.relationship(with: profile.id)
+            relationship = try await services.follow.relationship(with: profile.id)
         } catch {
             relationshipError = error.localizedDescription
         }
@@ -402,8 +403,8 @@ struct ProfileScreen: View {
 
     private func loadCounts() async {
         do {
-            followCounts = try await services!.follow.counts(for: profile.id)
-            postCount = try await services!.profile.postCount(for: profile.id)
+            followCounts = try await services.follow.counts(for: profile.id)
+            postCount = try await services.profile.postCount(for: profile.id)
         } catch {
             message = .failure(error.localizedDescription)
         }
@@ -414,7 +415,7 @@ struct ProfileScreen: View {
     /// `FeedView.refresh` gives.
     private func reload() async {
         do {
-            let page = try await services!.feed.fetchPosts(by: profile.id, limit: Self.pageSize)
+            let page = try await services.feed.fetchPosts(by: profile.id, limit: Self.pageSize)
             generation += 1
             posts = page.posts
             reachedEnd = !page.hasMore
@@ -433,7 +434,7 @@ struct ProfileScreen: View {
 
         let startedIn = generation
         do {
-            let page = try await services!.feed.fetchPosts(
+            let page = try await services.feed.fetchPosts(
                 by: profile.id, before: posts.last?.cursor, limit: Self.pageSize
             )
             guard startedIn == generation else { return }
@@ -466,9 +467,9 @@ struct ProfileScreen: View {
 
         await change(to: optimistic, rollingBackTo: previous) {
             if wantsToFollow {
-                try await services!.follow.follow(profile.id)
+                try await services.follow.follow(profile.id)
             } else {
-                try await services!.follow.unfollow(profile.id)
+                try await services.follow.unfollow(profile.id)
             }
         }
     }
@@ -481,7 +482,7 @@ struct ProfileScreen: View {
             to: Relationship(following: false, followedBy: false, blocking: true),
             rollingBackTo: previous
         ) {
-            try await services!.follow.block(profile.id)
+            try await services.follow.block(profile.id)
         }
     }
 
@@ -490,7 +491,7 @@ struct ProfileScreen: View {
     private func unblock() async {
         guard let previous = relationship else { return }
         await change(to: .unconnected, rollingBackTo: previous) {
-            try await services!.follow.unblock(profile.id)
+            try await services.follow.unblock(profile.id)
         }
     }
 
@@ -523,7 +524,7 @@ struct ProfileScreen: View {
     /// everything else refetches.
     private func delete(_ post: FeedPost) async {
         do {
-            try await services!.post.deletePost(id: post.id, imagePath: post.imagePath)
+            try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
             posts.removeAll { $0.id == post.id }
             postCount = postCount.map { max(0, $0 - 1) }
             feedInvalidation.markStale()
@@ -556,7 +557,7 @@ struct ProfileScreen: View {
         defer { isDeletingAccount = false }
 
         do {
-            try await services!.profile.deleteAccount()
+            try await services.profile.deleteAccount()
             try await sessionStore.signOut()
         } catch {
             message = .failure(error.localizedDescription)

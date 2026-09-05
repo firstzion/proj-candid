@@ -195,7 +195,7 @@ struct PostView: View {
         message = nil
 
         do {
-            try await services!.post.createPost(image: image, caption: caption, visibility: visibility)
+            try await services.post.createPost(image: image, caption: caption, visibility: visibility)
             // Only reset once the row is actually written, so a failure leaves
             // the photo and caption in place to retry rather than discarding
             // work the person would have to redo. `visibility` deliberately

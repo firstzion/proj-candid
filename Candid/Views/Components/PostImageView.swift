@@ -30,6 +30,11 @@ struct PostImageView: View {
     /// square already has a size.
     let placeholderMinHeight: CGFloat
 
+    /// Passed in rather than read from `@Environment(\.services)`: a cache
+    /// hit has to render in the very first frame, in `init`, and environment
+    /// values are not readable there.
+    let imageCache: ImageCache
+
     @State private var phase: Phase
 
     private enum Phase {
@@ -43,16 +48,18 @@ struct PostImageView: View {
         url: URL?,
         accessibilityLabel: String,
         contentMode: ContentMode = .fit,
-        placeholderMinHeight: CGFloat = 200
+        placeholderMinHeight: CGFloat = 200,
+        imageCache: ImageCache
     ) {
         self.path = path
         self.url = url
         self.accessibilityLabel = accessibilityLabel
         self.contentMode = contentMode
         self.placeholderMinHeight = placeholderMinHeight
+        self.imageCache = imageCache
         // A cache hit renders in the first frame; anything else starts as a
         // spinner and resolves in `load()`.
-        if let cached = ImageCache.shared.cachedImage(for: path) {
+        if let cached = imageCache.cachedImage(for: path) {
             _phase = State(initialValue: .loaded(cached))
         } else {
             _phase = State(initialValue: url == nil ? .missing : .loading)
@@ -96,7 +103,7 @@ struct PostImageView: View {
             return
         }
         do {
-            let image = try await ImageCache.shared.image(for: path, from: url)
+            let image = try await imageCache.image(for: path, from: url)
             phase = .loaded(image)
         } catch {
             // Not on cancellation: the row scrolled away before the bytes

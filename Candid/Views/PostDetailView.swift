@@ -41,7 +41,8 @@ struct PostDetailView: View {
                 PostImageView(
                     path: post.imagePath,
                     url: post.imageURL,
-                    accessibilityLabel: post.caption ?? "Photo by \(post.username)"
+                    accessibilityLabel: post.caption ?? "Photo by \(post.username)",
+                    imageCache: services.imageCache
                 )
 
                 if let caption = post.caption {
@@ -113,7 +114,7 @@ struct PostDetailView: View {
     private func block(_ person: Profile) async {
         deleteError = nil
         do {
-            try await services!.follow.block(person.id)
+            try await services.follow.block(person.id)
             feedInvalidation.markStale()
             dismiss()
         } catch {
@@ -130,7 +131,7 @@ struct PostDetailView: View {
         defer { isDeleting = false }
 
         do {
-            try await services!.post.deletePost(id: post.id, imagePath: post.imagePath)
+            try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
             feedInvalidation.markStale()
             dismiss()
         } catch {

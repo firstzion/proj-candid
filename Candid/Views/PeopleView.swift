@@ -103,14 +103,14 @@ struct PeopleView: View {
         searchError = nil
         defer { isSearching = false }
         do {
-            let found = try await services!.profile.search(prefix: prefix)
+            let found = try await services.profile.search(prefix: prefix)
             guard !Task.isCancelled else { return }
             results = found
             renamed = nil
             // Nothing by that prefix, but it is a whole possible username:
             // maybe it used to be someone's.
             if found.isEmpty, UsernameRules.validationProblem(prefix) == nil,
-               let person = try await services!.profile.profile(username: prefix),
+               let person = try await services.profile.profile(username: prefix),
                person.username != prefix {
                 guard !Task.isCancelled else { return }
                 renamed = Renamed(former: prefix, profile: person)
