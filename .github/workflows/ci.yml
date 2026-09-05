@@ -1,30 +1,54 @@
 name: CI
 
+# Scoped to main because that is where commits actually go — one per card,
+# straight to the branch. Unscoped `push` plus `pull_request` also meant any
+# future PR branch would be built twice, once for each trigger.
+#
+# Markdown never changes what compiles, and a docs-only card (SOL-83) would
+# otherwise pay for a full build to prove it.
 on:
   push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
   pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+
+# A newer commit supersedes an older one. Without this, pushing three commits
+# in a session ran three builds to completion, two of them already answering a
+# question nobody was still asking.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: macos-15
+    # The Mac in the loop, registered as a self-hosted runner. GitHub's macOS
+    # runners bill at ten times the Linux rate on a private repo, so this one
+    # job was effectively the whole Actions budget: roughly seventy billed
+    # minutes per push, against a schema job costing two. Self-hosted is
+    # unmetered, and the Mac is already the machine that runs `supabase db
+    # push`.
+    #
+    # Jobs queue until the runner is online — that is the trade for it being
+    # free, and it is why `timeout-minutes` is set rather than left to the
+    # six-hour default.
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+      # No setup-xcode step: on a hosted runner it selects among several
+      # Xcodes, on this Mac there is one, and switching it would need sudo and
+      # would change the machine outside CI.
 
-      # Package.resolved pins the exact versions SPM will fetch, so it is the
-      # right cache key input — unlike project.pbxproj, it only changes when a
-      # dependency actually changes.
-      - name: Cache SPM packages
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
-          key: spm-${{ runner.os }}-${{ hashFiles('Candid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: |
-            spm-${{ runner.os }}-
+      # No SPM cache step either. It existed because a hosted runner starts
+      # from an empty disk every time; this one keeps its DerivedData between
+      # runs, so restoring an older copy of SourcePackages over the current
+      # one would cost an upload and a download to achieve nothing.
 
       # Hardcoding a device name risks it not existing on the runner's
       # simulator image; the runner's own available-devices list already
