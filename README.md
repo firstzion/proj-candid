@@ -193,14 +193,20 @@ except for someone the owner has blocked; search, whose view omits you, your
 blocks and your blockers; and reports — insert-only, only what the reporter
 could see, a repeat refused, unreadable to everyone, surviving the post's
 deletion.
-Everything it touches is rolled back. Run it against the hosted
-project after a push and a seed run:
+Everything it touches is rolled back. CI (`.github/workflows/ci.yml`,
+`schema` job) runs it on every push, against migrations and seed data applied
+fresh to a throwaway database via `supabase start` and `supabase db reset` —
+so a migration that breaks a policy or a grant fails in minutes instead of
+waiting for the next manual run (SOL-81). That local run is a stand-in: the
+way to check the live database itself, after an actual `supabase db push`, is
+still to run it there directly:
 
 ```bash
 supabase db query --linked -f supabase/tests/visibility_matrix.sql
 ```
 
-It prints `all checks passed`, or stops at the first failing case.
+It prints `all checks passed`, or stops at the first failing case, either
+way.
 
 ## Project layout
 

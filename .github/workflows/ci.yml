@@ -54,3 +54,52 @@ jobs:
         with:
           name: TestResults
           path: TestResults.xcresult
+
+  # The schema is where the product's guarantees actually live — RLS,
+  # column grants, the can_view_post() rule — and until now nothing checked
+  # it on a push. The two most serious findings of the 2026-09-04 review
+  # were both SQL (client-writable columns, an anon-executable definer
+  # function); nothing automated would have caught either (SOL-81).
+  schema:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # This job never calls an HTTP API — the matrix talks straight to
+      # Postgres — so every service the CLI can exclude is skipped. Only
+      # the database container carries the schema (storage.objects and its
+      # triggers included; those come from the Postgres image's own init,
+      # not from the storage-api container), so excluding the rest is safe
+      # and keeps startup to one container instead of a dozen.
+      - name: Start the local database
+        run: >
+          supabase start -x
+          gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      # Applies every migration in order, then supabase/seed.sql
+      # ([db.seed] is enabled in config.toml) — the same two things
+      # `supabase db push` and a manual seed run do against the hosted
+      # project, replayed here on a throwaway database instead.
+      - name: Apply migrations and seed
+        run: supabase db reset
+
+      # ON_ERROR_STOP makes any failing ASSERT or RAISE EXCEPTION fail this
+      # step immediately; the grep guards against a script that exited
+      # early without reaching its own final SELECT.
+      - name: Run the visibility matrix
+        run: |
+          db_url=$(supabase status -o env | sed -n 's/^DB_URL="\(.*\)"$/\1/p')
+          psql "$db_url" -v ON_ERROR_STOP=1 -f supabase/tests/visibility_matrix.sql | tee matrix.log
+          grep -q 'all checks passed' matrix.log
+
+      - name: Upload matrix output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-log
+          path: matrix.log
