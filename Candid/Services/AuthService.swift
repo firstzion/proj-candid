@@ -30,12 +30,16 @@ enum SignUpError: LocalizedError {
             return "That code has expired. Ask for a new one."
         case .emailAlreadyRegistered:
             // Deliberate email enumeration, unlike the log-in path below.
-            // Decision (SOL-53): accepted for now — most consumer apps make
-            // this trade for the better sign-up UX, and severity is low for a
-            // friends-only app. Once email confirmation is enabled, GoTrue
-            // itself returns a fake success for a duplicate address instead
-            // of an error, so this case fires only while confirmations are
-            // off; revisit removing it entirely at that point.
+            // Decision (SOL-53): accepted — most consumer apps make this
+            // trade for the better sign-up UX, and severity is low for a
+            // friends-only app.
+            //
+            // Unreachable against this project, and kept anyway. Email
+            // confirmation is on (`supabase/config.toml`), and GoTrue then
+            // answers a duplicate address with a fake success rather than an
+            // error — which `SignUpView`'s notice is worded for. The case
+            // costs one branch and is the only thing standing between a
+            // project with confirmations off and raw GoTrue text on screen.
             return "An account with that email already exists."
         case .usernameTaken:
             return "That username is already taken. Try another one."

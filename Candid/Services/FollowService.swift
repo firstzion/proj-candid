@@ -20,10 +20,10 @@ enum FollowError: LocalizedError {
         case .accountMissing:
             return "That account no longer exists."
         case .notPermitted:
-            // Deliberately vague. Once blocking lands (SOL-31), the follows
-            // insert policy refuses an edge across a block and the refusal
-            // arrives here; the wording must not say why, because a block is
-            // silent to the person on the other side of it.
+            // Deliberately vague. The follows insert policy refuses an edge
+            // across a block (SOL-31) and the refusal arrives here; the
+            // wording must not say why, because a block is silent to the
+            // person on the other side of it.
             return "Couldn't follow this account right now."
         case .other(let message):
             return message
@@ -42,9 +42,9 @@ enum FollowError: LocalizedError {
 /// which calls a definer function rather than counting rows the policy hides.
 ///
 /// Nothing here decides what a block *means*. The database severs follows
-/// when a block is made, refuses a new follow across one, and (once the
-/// `can_view_post()` rule lands) hides each side from the other; this type
-/// only writes the row and reads back the caller's own.
+/// when a block is made, refuses a new follow across one, and — through the
+/// `can_view_post()` rule — hides each side from the other; this type only
+/// writes the row and reads back the caller's own.
 struct FollowService {
     let client: SupabaseClient
 

@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Your invites (SOL-63): how many you have left, the codes you have out, and
 /// who used the ones that were used. Deliberately plain — a list, a button
-/// and a share sheet; no streaks, no nudges. Reached from your own profile,
-/// and from the People tab once it exists (SOL-39).
+/// and a share sheet; no streaks, no nudges. Reached from your own profile
+/// and from the People tab (SOL-39).
 ///
 /// Nothing here enforces anything. `create_invite()` checks the quota on the
 /// server and the delete policy decides what can be revoked; this screen says
@@ -36,6 +36,10 @@ struct InvitesView: View {
                     await create()
                 }
             } footer: {
+                // "30 days" mirrors the interval fixed inside create_invite()
+                // (20260905020000_create_invite_no_expiry_param.sql), which is
+                // where it is enforced — keep the two in sync by hand. The
+                // caller cannot choose it; that was the point of SOL-70.
                 Text("A code admits one person and expires after 30 days if nobody uses it. Swipe an unused code to take it back.")
             }
 

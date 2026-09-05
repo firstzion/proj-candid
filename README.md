@@ -9,36 +9,35 @@ Tracked in Linear: [Project Candid](https://linear.app/cspurlock/project/project
 
 ## Status
 
-MVP complete: sign up, log in, post a photo, and see it in the feed, all working
-end to end against the hosted backend. Also done: a full code-review pass
-(in-app account deletion, a real password policy, Swift 6 strict concurrency,
-CI, this README). In flight: the social graph and visibility model that will
-make the feed actually reflect who you follow, rather than showing every post
-to every signed-in user. The graph itself is in — the `follows` table, the
-derived `mutuals` view and `FollowService` — and so are per-post visibility,
-chosen at posting time and fixed from then on, blocking's data model, and the
-rule that ties them together: `can_view_post()`, one Postgres function that
-every read of a post or a post image goes through. The feed shows only what
-you are permitted to see, and you can follow, unfollow, block and unblock
-people from their profile — reached by tapping a username in the feed or
-looking one up on the Profile tab. What's left of Milestone 7 is the hands-on
-smoke test. Milestone 8 has started with its privacy fix: follower and
-following counts are public, but the lists behind them are readable only by
-the people at either end of an edge and their mutuals (SOL-66). You can
-delete your own posts from the feed — long-press, confirm, and the row and its
-image are both gone (SOL-38) — and the upload pipeline is now proven rather
-than assumed to strip EXIF, location included (SOL-44). The profile screen is
-real now: counts, a grid, and the follow lists where they may be read
-(SOL-37). And sign-up is invite-only (Milestone 9, SOL-60–62): a new account
-needs a code from someone already here, the trigger that creates its profile
-also redeems the code and makes the two friends, and nobody's first feed is
-empty. You mint and share invites from your own profile (SOL-63), and you
-can change your username there too: once every 30 days, with a name you give
-up held for you for 90 days and old handles still finding you (SOL-41). You
-can report a post or a person: the reported account learns nothing, blocking
-is offered right after, and reports collect in a table only the project owner
-can read until a moderation dashboard exists (SOL-42). Every screen that can
-be empty says something deliberate and points somewhere (SOL-40).
+Milestones 1–7 are done. What is left is two hands-on smoke tests, the tail of
+the September 2026 code review, and getting the app onto a physical device.
+
+| Milestone | State |
+|---|---|
+| 1–4 · Foundation, accounts, posting, feed | Done |
+| 5 · Code review follow-ups | Done |
+| 6 · Schema and storage hardening | Done |
+| 7 · Social graph and visibility | Done |
+| 8 · Profiles, discovery and post management | Smoke test left (SOL-67) |
+| 9 · Invite-only onboarding | Smoke test left (SOL-64) |
+| 10 · On-device testing | Not started |
+| 11 · Code review follow-ups (Milestones 7–9) | In progress |
+
+Linear is where the per-card detail lives — what each milestone contains, why
+a decision went the way it did, and what is still open. This section says only
+where things stand; the sections below say how the parts work.
+
+## What's built
+
+Enough for a small group to use end to end: sign up with an invite, post a
+photo to a chosen audience, read a feed filtered by who you follow, find and
+follow people, change your username, block or report someone, and delete your
+account. Authorization is not the app's business — one Postgres function,
+`can_view_post()`, decides every read of a post or a post image, and the
+client sends no filter of its own (see Schema). Uploads carry no metadata
+(SOL-44), posts can be deleted (SOL-38), reports collect where only the
+project owner can read them (SOL-42), and every screen that can be empty says
+something deliberate and points somewhere (SOL-40).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -132,10 +131,17 @@ xcodebuild -project Candid.xcodeproj -scheme Candid \
   -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same command on every push and pull
-request, against whichever iPhone simulator the runner's image happens to
-have available — it asks `simctl` rather than hardcoding a device name, so an
-image update can't break the build by renaming or dropping one.
+CI (`.github/workflows/ci.yml`) runs the same command on pushes to `main` and
+on pull requests against it, asking `simctl` for a simulator rather than
+hardcoding a device name, so a machine with a different set installed still
+builds.
+
+The `test` job runs on a **self-hosted macOS runner**, not a GitHub-hosted
+one, so jobs queue until that Mac is online. GitHub's macOS runners bill at
+ten times the Linux rate on a private repo, which made this one job
+effectively the entire Actions budget — around seventy billed minutes per
+push, against two for the `schema` job. Markdown-only commits are skipped and
+a newer push cancels an older run, for the same reason.
 
 Unit tests live in `CandidTests/` and use Swift Testing. Most cover pure logic
 most likely to rot quietly: the error-mapping functions, which translate opaque
@@ -174,6 +180,14 @@ and the refusal that stays vague. All of them
 build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
+`PagedPostsTests` is the exception that needs no HTTP at all. `PagedPosts`
+(SOL-71) takes a `PostsPaging` rather than a `FeedService`, so a test can
+hand over a page on its own schedule — which is the only practical way to
+prove the guard that drops a `loadMore` overtaken by a refresh, since staging
+that through canned responses means blocking inside a `URLSession` callback.
+The same suite covers the id-dedupe on append, the retry after a failed page,
+a failed refresh leaving posts on screen, and the staleness boundary.
+
 The authorization rule itself is tested in SQL, not Swift.
 `supabase/tests/visibility_matrix.sql` impersonates each seeded account the
 way PostgREST does (`request.jwt.claims` plus the `authenticated` role) and
@@ -194,7 +208,7 @@ blocks and your blockers; and reports — insert-only, only what the reporter
 could see, a repeat refused, unreadable to everyone, surviving the post's
 deletion.
 Everything it touches is rolled back. CI (`.github/workflows/ci.yml`,
-`schema` job) runs it on every push, against migrations and seed data applied
+`schema` job) runs it on every push to `main`, against migrations and seed data applied
 fresh to a throwaway database via `supabase start` and `supabase db reset` —
 so a migration that breaks a policy or a grant fails in minutes instead of
 waiting for the next manual run (SOL-81). That local run is a stand-in: the
@@ -219,19 +233,23 @@ Candid/
   Models/             FeedPost/FeedPage/FeedCursor, Profile, Relationship,
                       FollowCounts, Invite/InviteState, UsernameRules
   ViewModels/         SessionStore (mirrors the SDK's auth state),
+                      PagedPosts (one page-at-a-time list of posts, shared by
+                      the feed and the profile grid),
                       FeedInvalidation (tells the feed to refresh after a post),
                       PendingInvite (a code that arrived by deep link),
                       TabSelection (which tab is showing, for empty states)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
                       FollowService, InviteService, ReportService, StorageService,
-                      ImageCache, ImageDownsampler
+                      ImageCache, ImageDownsampler, ServiceErrors (shared error
+                      mapping), Log
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView,
                       InvitesView, EditUsernameSheet, PeopleView (the People tab),
                       ReportSheet, EmptyStates (the six empty states' copy)
-    Components/       PostImageView, shared form controls
+    Components/       PostImageView, LoadMoreFooter, the delete-post and
+                      report-then-block flows, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
 supabase/             CLI config, versioned migrations, seed data, and the
@@ -355,10 +373,9 @@ position in their feed, both worse than "delete and repost". Two things
 enforce that: `posts` has no update policy at all — nothing in the app updates
 a post — and a `before update` trigger refuses any change to `visibility`
 regardless of policy, so a caption-edit policy added later can't reopen it by
-accident. Until the `can_view_post()` rule lands (SOL-30) the column changes
-nothing a viewer can see; the feed marks `mutuals` posts "Friends only" so you
-can tell which audience a photo went to, and the app mirrors the enum in
-`PostVisibility`, whose raw values are the Postgres labels.
+accident. The feed marks `mutuals` posts "Friends only" so you can tell which
+audience a photo went to, and the app mirrors the enum in `PostVisibility`,
+whose raw values are the Postgres labels.
 
 `blocks` is the one relationship that overrides the graph: `(a, b)` means a
 has blocked b. Everything a block does happens in the database, so no query
@@ -665,6 +682,16 @@ by storage path rather than URL: a signed URL is different every time it is
 minted, which defeats `AsyncImage` and `URLCache` and had every refresh
 re-downloading every image. A freshly uploaded photo is seeded into the cache so
 the poster's own post appears without a download.
+
+The cache holds a second keyspace, `path#side`, for the profile grid (SOL-80).
+A grid cell is about 130 pt wide and was drawing the full 1600 px upload —
+roughly 7 MB of bitmap for a sixteenth of that area — so a page of twenty
+cells filled the 100 MB cost limit, evicted itself and re-downloaded on the
+way back up. Thumbnails are scaled on their *shorter* edge, because a square
+cell covers itself by clipping the overflow; capping the longer edge would
+hand the cell an image too small and leave it upscaling. Each is derived from
+the full image, which is kept as well, so tapping a cell opens
+`PostDetailView` on something already decoded.
 
 ### Account deletion
 

@@ -33,6 +33,11 @@ struct EditUsernameSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } footer: {
+                    // "30 days" and "90 days" mirror the cooldown and the hold
+                    // period in 20260905013141_username_history.sql, which are
+                    // where they are enforced — keep the two in sync by hand.
+                    // The lengths come from UsernameRules, which the client
+                    // does check, so those are interpolated rather than typed.
                     Text("Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores. You can change yours once every 30 days. A name you give up is held for you for 90 days, and anyone who knew it can still find you by it.")
                 }
 

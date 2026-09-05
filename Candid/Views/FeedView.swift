@@ -20,9 +20,10 @@ struct FeedView: View {
     @State private var feedEmptyState: EmptyState?
 
     /// The author whose username was just tapped; non-nil pushes their
-    /// profile. Before search exists this is the one way to reach someone
-    /// from inside the app — though only someone whose post you can already
-    /// see, which is why the Profile tab also has a lookup by name.
+    /// profile. One of two ways to reach someone from inside the app, and the
+    /// only one that does not need their name: this reaches anyone whose post
+    /// you can already see, where the People tab (SOL-39) searches by
+    /// username.
     @State private var selectedProfile: Profile?
 
     /// The post whose long-press menu chose Delete, held while the
