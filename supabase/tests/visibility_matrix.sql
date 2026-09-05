@@ -627,8 +627,22 @@ begin
         v_visible uuid;
         v_hidden  uuid;
     begin
+        -- Fetched as owner, deliberately: by this point case 10 has broken
+        -- bob and alice's mutual follow, so whichever role happened to be
+        -- active last (an accident of the case run immediately before this
+        -- one) might not itself be able to see one or both of these posts.
+        -- A SELECT INTO that finds nothing assigns NULL rather than raising,
+        -- and a null reported_post_id trivially satisfies the insert policy's
+        -- "reported_post_id is null or can_view_post(...)" check below — so
+        -- a role-dependent NULL here would silently turn every assertion in
+        -- this case into a false pass. Found the hard way (SOL-81's first
+        -- real CI run): case 27, added later, changed which role was last
+        -- active and flipped which sub-case went silently green.
+        perform pg_temp.act_as_owner();
         select id into v_visible from public.posts where user_id = alice and visibility = 'followers' order by created_at limit 1;
         select id into v_hidden from public.posts where user_id = bob and visibility = 'mutuals';
+        assert v_visible is not null, 'case 26 precondition: v_visible did not resolve to a real post';
+        assert v_hidden is not null, 'case 26 precondition: v_hidden did not resolve to a real post';
         perform pg_temp.act_as(carol);
         -- The wrong person on purpose: the trigger fills the author.
         insert into public.reports (reporter_id, reported_profile_id, reported_post_id, reason, details)
