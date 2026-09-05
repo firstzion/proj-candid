@@ -2,11 +2,21 @@
 -- seeded graph from every seat at the table.
 --
 -- Read-only in effect: everything runs inside one transaction that ends in
--- ROLLBACK, including the temporary rows some cases need. Run it against the
--- hosted project after `supabase db push` and a seed run, with database-owner
--- privileges — the same way the seed itself is run:
+-- ROLLBACK, including the temporary rows some cases need. Local and CI only
+-- now (SOL-86): it asserts against the specific seeded graph (alice, bob,
+-- ...), and seed.sql must never run against the hosted project again — the
+-- password printed in its own header became public the moment this repo did.
+-- Run it with database-owner privileges against the local database
+-- `supabase start`/`db reset` seeds:
 --
---   supabase db query --linked -f supabase/tests/visibility_matrix.sql
+--   psql "$(supabase status -o env | sed -n 's/^DB_URL="\(.*\)"$/\1/p')" \
+--     -f supabase/tests/visibility_matrix.sql
+--
+-- or let CI's `schema` job run it for you, which it does on every push.
+-- Checking a change against the *hosted* project is a separate, smaller
+-- thing now — a targeted `begin; … rollback;` block exercising just the new
+-- policy, grant or function, never a full seeded run. See the README's
+-- Backend section.
 --
 -- It prints "all checks passed", or stops at the first failing assertion with
 -- the case number in the message. Impersonation works the way PostgREST's

@@ -211,16 +211,29 @@ Everything it touches is rolled back. CI (`.github/workflows/ci.yml`,
 `schema` job) runs it on every push to `main`, against migrations and seed data applied
 fresh to a throwaway database via `supabase start` and `supabase db reset` —
 so a migration that breaks a policy or a grant fails in minutes instead of
-waiting for the next manual run (SOL-81). That local run is a stand-in: the
-way to check the live database itself, after an actual `supabase db push`, is
-still to run it there directly:
+waiting for the next manual run (SOL-81). It prints `all checks passed`, or
+stops at the first failing case, either way.
 
-```bash
-supabase db query --linked -f supabase/tests/visibility_matrix.sql
+That local/CI run is now the only place this file runs. It asserts against
+the specific seeded graph (alice, bob, ...), and after SOL-86 that graph must
+never exist on the hosted project again — `seed.sql` prints its one shared
+password in its own header, which was fine while the repo was private and
+became a public login to production the instant it wasn't. Checking a change
+against the hosted database itself is a separate, smaller thing now: a
+targeted `begin; … rollback;` block exercising just the new policy, grant or
+function, impersonating a user the way the matrix does (`set local role
+authenticated` plus `request.jwt.claims`) — never a full seeded run. This is
+how the grants, storage-cap and report-target migrations were each checked
+live before being pushed for real, run through the Dashboard SQL Editor or
+`psql "$(supabase db url --linked)"`:
+
+```sql
+begin;
+set local role authenticated;
+set local request.jwt.claims = '{"sub": "<uuid-under-test>", "role": "authenticated"}';
+-- exercise the specific policy, grant or function under test
+rollback;
 ```
-
-It prints `all checks passed`, or stops at the first failing case, either
-way.
 
 ## Project layout
 
