@@ -273,6 +273,24 @@ struct FollowService {
         }
     }
 
+    /// How many people the signed-in user follows — a HEAD request with the
+    /// server's count, and the one fact that tells the feed's two empty
+    /// states apart (SOL-40): following nobody, or following people who have
+    /// not posted. The caller's own edges are always readable.
+    func followingCount() async throws -> Int {
+        let me = try await sessionUserID()
+        do {
+            let response: PostgrestResponse<Void> = try await client
+                .from("follows")
+                .select("followee_id", head: true, count: .exact)
+                .eq("follower_id", value: me)
+                .execute()
+            return response.count ?? 0
+        } catch {
+            throw Self.mapFollowError(error)
+        }
+    }
+
     /// The caller's own `blocks` row for `userID`, if any — the select policy
     /// would hide anyone else's regardless of filter.
     private func ownBlock(from me: UUID, of userID: UUID) async throws -> [BlockRow] {

@@ -60,8 +60,9 @@ struct PeopleView: View {
                                 }
                             }
                         } else if results.isEmpty {
-                            // SOL-40 writes the final copy.
-                            Text("No people match “\(normalizedQuery)”.")
+                            // One of the six empty states (SOL-40), in the
+                            // compact form a list row wants.
+                            Text(EmptyState.searchNoResults(query: normalizedQuery).message)
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(results) { person in

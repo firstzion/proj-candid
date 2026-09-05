@@ -5,8 +5,13 @@ struct FeedView: View {
     @Environment(\.services) private var services
     @Environment(FeedInvalidation.self) private var feedInvalidation
     @EnvironmentObject private var sessionStore: SessionStore
+    @Environment(TabSelection.self) private var tabSelection
 
     @State private var posts: [FeedPost] = []
+
+    /// Which of the two empties an empty feed is (SOL-40), decided after a
+    /// refresh that came back with nothing; nil while that is being decided.
+    @State private var feedEmptyState: EmptyState?
     @State private var phase: Phase = .loading
     @State private var isLoadingMore = false
     @State private var reachedEnd = false
@@ -71,7 +76,11 @@ struct FeedView: View {
                     ProgressView()
 
                 case .loaded where posts.isEmpty:
-                    ContentUnavailableView("No Posts Yet", systemImage: "photo.on.rectangle.angled")
+                    if let feedEmptyState {
+                        EmptyStateView(state: feedEmptyState) { tabSelection.selected = .people }
+                    } else {
+                        ProgressView()
+                    }
 
                 case .loaded:
                     List {
@@ -203,6 +212,11 @@ struct FeedView: View {
             reachedEnd = !page.hasMore
             loadMoreError = nil
             phase = .loaded
+            if page.posts.isEmpty {
+                await decideEmptyState()
+            } else {
+                feedEmptyState = nil
+            }
         } catch {
             // A failed refresh with posts already on screen just leaves them
             // there — the pull-to-refresh spinner dismisses and the user can
@@ -212,6 +226,17 @@ struct FeedView: View {
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Two different empties, told apart by one number (SOL-40). Following
+    /// nobody is what you see after unfollowing everyone — under invite-only
+    /// onboarding a new account arrives with a friend — and it points to the
+    /// People tab; following people who haven't posted is not a problem to
+    /// solve, so it just says so. If the count itself fails, "nothing yet" is
+    /// the safer wrong answer: it prompts nothing.
+    private func decideEmptyState() async {
+        let count = (try? await services!.follow.followingCount()) ?? 1
+        feedEmptyState = count == 0 ? .feedFollowingNobody : .feedNothingYet
     }
 
     private func loadMore() async {
@@ -389,4 +414,5 @@ private struct FeedPostRow: View {
         .environmentObject(SessionStore(client: .preview))
         .environment(\.services, AppServices(client: .preview))
         .environment(FeedInvalidation())
+        .environment(TabSelection())
 }

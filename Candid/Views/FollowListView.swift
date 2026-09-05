@@ -31,7 +31,8 @@ struct FollowListView: View {
         Group {
             if let people {
                 if people.isEmpty {
-                    // SOL-40 writes the final copy.
+                    // Not one of SOL-40's six — the lists open only where they
+                    // can be read, so this is a real zero, and it says so.
                     ContentUnavailableView(
                         kind == .followers ? "No Followers Yet" : "Not Following Anyone",
                         systemImage: "person.2"

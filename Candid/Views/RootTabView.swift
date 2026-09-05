@@ -1,28 +1,37 @@
 import SwiftUI
 
 struct RootTabView: View {
+    /// Bound to the tab bar and shared downwards, so an empty state can send
+    /// someone to the People tab or the Post tab (SOL-40).
+    @State private var tabSelection = TabSelection()
+
     var body: some View {
-        TabView {
+        TabView(selection: $tabSelection.selected) {
             FeedView()
                 .tabItem {
                     Label("Feed", systemImage: "photo.stack")
                 }
+                .tag(TabSelection.Tab.feed)
 
             PostView()
                 .tabItem {
                     Label("Post", systemImage: "plus.square")
                 }
+                .tag(TabSelection.Tab.post)
 
             PeopleView()
                 .tabItem {
                     Label("People", systemImage: "person.2")
                 }
+                .tag(TabSelection.Tab.people)
 
             ProfileTab()
                 .tabItem {
                     Label("Profile", systemImage: "person.crop.circle")
                 }
+                .tag(TabSelection.Tab.profile)
         }
+        .environment(tabSelection)
     }
 }
 

@@ -37,7 +37,8 @@ can change your username there too: once every 30 days, with a name you give
 up held for you for 90 days and old handles still finding you (SOL-41). You
 can report a post or a person: the reported account learns nothing, blocking
 is offered right after, and reports collect in a table only the project owner
-can read until a moderation dashboard exists (SOL-42).
+can read until a moderation dashboard exists (SOL-42). Every screen that can
+be empty says something deliberate and points somewhere (SOL-40).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -213,7 +214,8 @@ Candid/
                       FollowCounts, Invite/InviteState, UsernameRules
   ViewModels/         SessionStore (mirrors the SDK's auth state),
                       FeedInvalidation (tells the feed to refresh after a post),
-                      PendingInvite (a code that arrived by deep link)
+                      PendingInvite (a code that arrived by deep link),
+                      TabSelection (which tab is showing, for empty states)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
                       FollowService, InviteService, ReportService, StorageService,
@@ -222,7 +224,7 @@ Candid/
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView,
                       InvitesView, EditUsernameSheet, PeopleView (the People tab),
-                      ReportSheet
+                      ReportSheet, EmptyStates (the six empty states' copy)
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -464,6 +466,21 @@ repeat report is refused by a partial unique index, which `ReportService`
 treats as success. Reporting is silent to the reported account, and the sheet
 offers a block right after, since the reporter usually wants the content gone
 from their own view now.
+
+Empty states (SOL-40) live in one place, `EmptyState`, with `EmptyStateView`
+drawing them. The feed tells its two empties apart with
+`FollowService.followingCount()`: following nobody — what you see after
+unfollowing everyone, since an invite makes a new account's first feed
+non-empty — points to the People tab, and following people who haven't posted
+just says so. Your own profile with no posts points to the Post tab; someone
+else's with none you can see says one neutral thing for both meanings, on
+purpose — the count and the grid are read under RLS, so an account with three
+friends-only posts reads exactly like one with none. Search with no results
+says which query, and a blocked profile — reachable only by the blocker, since
+the profiles policy hides the blocker from the blocked — shows "You've blocked
+@name" with Unblock and no grid. `TabSelection`, owned by `RootTabView` and
+shared through the environment, is the one piece of plumbing: the two states
+that jump set it.
 
 Before creating the auth user, sign-up also asks `username_available(text)`
 whether the name is still free. The person asking has no session yet and

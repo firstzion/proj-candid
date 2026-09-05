@@ -39,6 +39,7 @@ struct ProfileScreen: View {
 
     @Environment(\.services) private var services
     @Environment(FeedInvalidation.self) private var feedInvalidation
+    @Environment(TabSelection.self) private var tabSelection
     @EnvironmentObject private var sessionStore: SessionStore
 
     /// Nil until loaded; only for someone else's profile.
@@ -90,19 +91,36 @@ struct ProfileScreen: View {
     /// The lists open only where RLS would let them be read.
     private var canOpenLists: Bool { isSelf || relationship?.isMutual == true }
 
+    private var isBlocking: Bool { relationship?.blocking == true }
+
+    @ViewBuilder
+    private var messageLine: some View {
+        if let message {
+            Text(message.text)
+                .font(.footnote)
+                .foregroundStyle(message.kind == .failure ? Color.red : Color.secondary)
+                .padding(.horizontal)
+        }
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 header
-                countsRow
-                actions
-                if let message {
-                    Text(message.text)
-                        .font(.footnote)
-                        .foregroundStyle(message.kind == .failure ? Color.red : Color.secondary)
-                        .padding(.horizontal)
+                if isBlocking {
+                    // Reachable only by the blocker — the profiles policy hides
+                    // the blocker from the blocked — and there is nothing to
+                    // count or show: Unblock, in `actions`, is the way back.
+                    actions
+                    messageLine
+                    EmptyStateView(state: .blockedProfile(username: displayedUsername))
+                        .frame(maxWidth: .infinity)
+                } else {
+                    countsRow
+                    actions
+                    messageLine
+                    grid
                 }
-                grid
             }
             .padding(.vertical)
         }
@@ -293,10 +311,16 @@ struct ProfileScreen: View {
             .padding()
 
         case .loaded where posts.isEmpty:
-            // One message for "has no posts" and "has posts you can't see",
-            // on purpose; SOL-40 writes the final copy.
-            ContentUnavailableView("No Posts", systemImage: "photo.on.rectangle.angled")
-                .frame(maxWidth: .infinity)
+            if isSelf {
+                EmptyStateView(state: .ownProfileNoPosts) { tabSelection.selected = .post }
+                    .frame(maxWidth: .infinity)
+            } else {
+                // One message for "has no posts" and "has posts you can't
+                // see", on purpose (SOL-40): the count and the grid are read
+                // under RLS, so the two are indistinguishable by construction.
+                EmptyStateView(state: .profileNoVisiblePosts)
+                    .frame(maxWidth: .infinity)
+            }
 
         case .loaded:
             LazyVGrid(columns: columns, spacing: 2) {
@@ -547,4 +571,5 @@ struct ProfileScreen: View {
     .environmentObject(SessionStore(client: .preview))
     .environment(\.services, AppServices(client: .preview))
     .environment(FeedInvalidation())
+    .environment(TabSelection())
 }

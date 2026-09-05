@@ -351,6 +351,25 @@ struct FollowServiceTests {
         #expect(query["select"] == "profile:profiles!follows_followee_id_fkey(id,username)")
     }
 
+    /// The feed's two empty states are told apart by this one number.
+    @Test("followingCount asks the server to count the caller's own edges")
+    func followingCount() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.setHandler { _ in
+            .init(statusCode: 200, body: Data(), headers: ["Content-Range": "0-2/3", "Content-Type": "application/json"])
+        }
+
+        let count = try await Self.makeService().followingCount()
+        #expect(count == 3)
+
+        let request = try #require(StubURLProtocol.requests.last)
+        #expect(request.httpMethod == "HEAD")
+        #expect(request.url?.path == "/rest/v1/follows")
+        #expect(Self.queryItems(of: request)["follower_id"] == "eq.\(Self.me.uuidString)")
+        #expect(request.value(forHTTPHeaderField: "Prefer")?.contains("count=exact") == true)
+    }
+
     // MARK: - Fixtures
 
     private static func queryItems(of request: URLRequest) -> [String: String] {
