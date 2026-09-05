@@ -52,7 +52,15 @@ final class SupabaseService: @unchecked Sendable {
         let host = try requiredString(forKey: "SUPABASE_API_HOST", in: bundle)
         let key = try requiredString(forKey: "SUPABASE_PUBLISHABLE_KEY", in: bundle)
 
-        guard let url = URL(string: "https://\(host)"), url.host != nil else {
+        // Loopback only, never a real host: `supabase start`'s local stack
+        // serves plain HTTP, and ATS exempts loopback addresses regardless.
+        // This is what lets manual QA (SOL-67) point Secrets.xcconfig at a
+        // local instance and use throwaway seeded accounts, now that seeding
+        // the hosted project is permanently off the table (SOL-86).
+        let isLoopback = host.hasPrefix("127.0.0.1") || host.hasPrefix("localhost")
+        let scheme = isLoopback ? "http" : "https"
+
+        guard let url = URL(string: "\(scheme)://\(host)"), url.host != nil else {
             throw SupabaseConfigurationError.malformedHost(host)
         }
 
