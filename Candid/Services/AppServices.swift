@@ -14,6 +14,7 @@ struct AppServices {
     let follow: FollowService
     let storage: StorageService
     let invite: InviteService
+    let report: ReportService
 
     init(client: SupabaseClient) {
         auth = AuthService(client: client)
@@ -23,6 +24,7 @@ struct AppServices {
         follow = FollowService(client: client)
         storage = StorageService(client: client)
         invite = InviteService(client: client)
+        report = ReportService(client: client)
     }
 }
 

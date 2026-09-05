@@ -33,7 +33,9 @@
 -- rolls back, a good code admits and befriends, the quota holds), and
 -- changeable usernames from SOL-41 (24: one change per 30 days, released
 -- names reserved 90 days except from their owner, old handles resolve), and
--- search from SOL-39 (25: the view omits you, your blocks and your blockers).
+-- search from SOL-39 (25: the view omits you, your blocks and your blockers),
+-- and reports from SOL-42 (26: insert-only, only what you could see, filled
+-- from the post, a repeat refused, unreadable, surviving the post).
 
 begin;
 
@@ -577,6 +579,82 @@ begin
     select count(*) into n from public.posts where user_id = alice;
     assert n = 2, format('case 17: alice should have 2 posts left, has %s', n);
 
+    -- 26: reports (SOL-42). Insert-only, and only what the reporter could see:
+    -- the reporter is the caller, a reported post must pass can_view_post(),
+    -- the person is filled from the post, a repeat is a unique violation the
+    -- client treats as success, and nobody reads the table — while deleting a
+    -- reported post leaves the report, about the person, without tripping the
+    -- one-per-person uniqueness. Runs after 17, so alice still has two
+    -- followers posts carol can see; bob's friends-only post is one she can't.
+    declare
+        v_visible uuid;
+        v_hidden  uuid;
+    begin
+        select id into v_visible from public.posts where user_id = alice and visibility = 'followers' order by created_at limit 1;
+        select id into v_hidden from public.posts where user_id = bob and visibility = 'mutuals';
+        perform pg_temp.act_as(carol);
+        -- The wrong person on purpose: the trigger fills the author.
+        insert into public.reports (reporter_id, reported_profile_id, reported_post_id, reason, details)
+        values (carol, bob, v_visible, 'spam', 'seed spam');
+        begin
+            insert into public.reports (reporter_id, reported_profile_id, reported_post_id, reason) values (carol, alice, v_visible, 'hate');
+            raise exception 'case 26: a repeat report of the same post was accepted';
+        exception when unique_violation then
+            null;
+        end;
+        begin
+            insert into public.reports (reporter_id, reported_profile_id, reported_post_id, reason) values (carol, bob, v_hidden, 'spam');
+            raise exception 'case 26: carol reported a post she cannot see';
+        exception when insufficient_privilege then
+            null;
+        end;
+        insert into public.reports (reporter_id, reported_profile_id, reason) values (carol, alice, 'impersonation');
+        begin
+            insert into public.reports (reporter_id, reported_profile_id, reason) values (carol, alice, 'other');
+            raise exception 'case 26: a repeat report of the same person was accepted';
+        exception when unique_violation then
+            null;
+        end;
+        begin
+            insert into public.reports (reporter_id, reported_profile_id, reason) values (carol, carol, 'other');
+            raise exception 'case 26: carol reported herself';
+        exception when check_violation then
+            null;
+        end;
+        begin
+            insert into public.reports (reporter_id, reported_profile_id, reason) values (alice, carol, 'other');
+            raise exception 'case 26: carol filed a report as someone else';
+        exception when insufficient_privilege then
+            null;
+        end;
+        select count(*) into n from public.reports;
+        assert n = 0, format('case 26: the reporter must not read reports, reads %s', n);
+        perform pg_temp.act_as(alice);
+        select count(*) into n from public.reports;
+        assert n = 0, format('case 26: the reported account must not read reports, reads %s', n);
+        perform pg_temp.act_as_anon();
+        begin
+            insert into public.reports (reporter_id, reported_profile_id, reason) values (carol, alice, 'other');
+            raise exception 'case 26: anon filed a report';
+        exception when insufficient_privilege then
+            null;
+        end;
+        perform pg_temp.act_as_owner();
+        select count(*) into n from public.reports where reporter_id = carol and reported_profile_id = alice;
+        assert n = 2, format('case 26: carol should have 2 reports about alice (a post and the person), has %s', n);
+        assert exists (select 1 from public.reports where reporter_id = carol and reported_post_id = v_visible and reported_profile_id = alice and about_post and details = 'seed spam'),
+            'case 26: the post report should name alice, filled from the post';
+        perform pg_temp.act_as(alice);
+        delete from public.posts where id = v_visible;
+        get diagnostics n = row_count;
+        assert n = 1, format('case 26: alice should still be able to delete a reported post, deleted %s', n);
+        perform pg_temp.act_as_owner();
+        assert exists (select 1 from public.reports where reporter_id = carol and reported_profile_id = alice and about_post and reported_post_id is null),
+            'case 26: the report should outlive the post, about the person';
+        assert not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'reports' and cmd <> 'INSERT'),
+            'structure: reports must have insert policies only';
+    end;
+
     -- Exposure: the rule is callable from policies, and from nowhere the API
     -- reaches.
     perform pg_temp.act_as_owner();
@@ -612,6 +690,8 @@ begin
         'exposure: anon cannot execute username_available, so sign-up cannot check a name';
     assert not has_function_privilege('anon', 'public.enforce_username_rules()', 'execute'),
         'exposure: anon can execute enforce_username_rules';
+    assert not has_function_privilege('anon', 'public.fill_reported_profile()', 'execute'),
+        'exposure: anon can execute fill_reported_profile';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
 

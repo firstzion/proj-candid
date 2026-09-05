@@ -4,7 +4,7 @@ import SwiftUI
 /// this me": the header, the three counts and the grid are the same for
 /// everyone; only the action row differs. Your own has Edit Username
 /// (SOL-41), Invites (SOL-63), Log Out and Delete Account; anyone else's has
-/// Follow/Unfollow and Block/Unblock, with Report (SOL-42) to come. Reached
+/// Follow/Unfollow, Block/Unblock and Report (SOL-42). Reached
 /// from the Profile tab, a username in the feed, a search result on the
 /// People tab, or a follower list.
 ///
@@ -60,6 +60,10 @@ struct ProfileScreen: View {
     @State private var message: FormMessage?
     @State private var isConfirmingBlock = false
 
+    /// Reporting this person (SOL-42), and the block offered once it is done.
+    @State private var reportTarget: ReportSheet.Target?
+    @State private var isOfferingBlock = false
+
     @State private var isSigningOut = false
     @State private var isConfirmingDeleteAccount = false
     @State private var isDeletingAccount = false
@@ -111,6 +115,25 @@ struct ProfileScreen: View {
                 // profiles, so a refresh shows the new name on old posts.
                 feedInvalidation.markStale()
             }
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(target: target) { _ in
+                // No review queue exists yet, so the reporter usually wants
+                // the content gone from their own view now.
+                if relationship?.blocking != true {
+                    isOfferingBlock = true
+                }
+            }
+        }
+        .confirmationDialog(
+            "Reported. Block @\(displayedUsername) too?",
+            isPresented: $isOfferingBlock,
+            titleVisibility: .visible
+        ) {
+            Button("Block", role: .destructive) { Task { await block() } }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("You won't see each other's posts, and any follow between you ends. They won't be told.")
         }
         .navigationDestination(item: $listKind) { kind in
             FollowListView(profile: profile, kind: kind)
@@ -241,6 +264,7 @@ struct ProfileScreen: View {
                     }
                     Button("Block", role: .destructive) { isConfirmingBlock = true }
                 }
+                Button("Report…") { reportTarget = .profile(profile) }
             }
             .buttonStyle(.bordered)
             .disabled(isChanging)

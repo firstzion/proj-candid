@@ -34,7 +34,10 @@ needs a code from someone already here, the trigger that creates its profile
 also redeems the code and makes the two friends, and nobody's first feed is
 empty. You mint and share invites from your own profile (SOL-63), and you
 can change your username there too: once every 30 days, with a name you give
-up held for you for 90 days and old handles still finding you (SOL-41).
+up held for you for 90 days and old handles still finding you (SOL-41). You
+can report a post or a person: the reported account learns nothing, blocking
+is offered right after, and reports collect in a table only the project owner
+can read until a moderation dashboard exists (SOL-42).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -164,7 +167,9 @@ they extend. `InviteServiceTests` and `AuthServiceSignUpTests` pin the invite
 calls and the gate: a code that is not valid stops the sign-up before any
 request but the status check, and a valid one travels in the sign-up
 metadata. `ProfileServiceSearchTests` pins the prefix request — normalised,
-`_` escaped, capped — and the inputs answered empty without one. All of them
+`_` escaped, capped — and the inputs answered empty without one.
+`ReportServiceTests` pins both report shapes, the repeat treated as success
+and the refusal that stays vague. All of them
 build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
@@ -183,8 +188,10 @@ admitted and made mutual for a valid one, and the quota holding at five; and
 the username rules — one change a month with the date in the refusal, a
 released name reserved from others but not from its owner, a sign-up refused
 for a cooling-down name, and an old handle resolving to the current profile
-except for someone the owner has blocked; and search, whose view omits you,
-your blocks and your blockers.
+except for someone the owner has blocked; search, whose view omits you, your
+blocks and your blockers; and reports — insert-only, only what the reporter
+could see, a repeat refused, unreadable to everyone, surviving the post's
+deletion.
 Everything it touches is rolled back. Run it against the hosted
 project after a push and a seed run:
 
@@ -209,12 +216,13 @@ Candid/
                       PendingInvite (a code that arrived by deep link)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
-                      FollowService, InviteService, StorageService, ImageCache,
-                      ImageDownsampler
+                      FollowService, InviteService, ReportService, StorageService,
+                      ImageCache, ImageDownsampler
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView,
-                      InvitesView, EditUsernameSheet, PeopleView (the People tab)
+                      InvitesView, EditUsernameSheet, PeopleView (the People tab),
+                      ReportSheet
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -288,6 +296,7 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | `blocks` | `blocker_id` (→ `profiles`), `blocked_id` (→ `profiles`), `created_at`; PK (`blocker_id`, `blocked_id`), CHECK `blocker_id <> blocked_id` |
 | `invites` | `code` (PK), `inviter_id` (→ `profiles`, cascade), `redeemed_by` (→ `profiles`, set null), `redeemed_at`, `created_at`, `expires_at` |
 | `username_history` | `profile_id` (→ `profiles`, cascade), `username`, `changed_at`; PK (`profile_id`, `changed_at`) |
+| `reports` | `id` (PK), `reporter_id` (→ `profiles`), `reported_profile_id` (→ `profiles`), `reported_post_id` (→ `posts`, set null), `about_post`, `reason` (enum), `details` (≤ 500), `status` (`open` \| `reviewed` \| `actioned`), `created_at`; CHECK `reporter_id <> reported_profile_id` |
 
 A trigger on `auth.users` (`handle_new_user`) runs inside GoTrue's insert at
 sign-up. Since Milestone 9 it is the whole onboarding transaction: it requires
@@ -438,6 +447,23 @@ exposes nothing but `id` and `username`. `profiles_username_pattern_idx`
 under the project's `en_US` collation. `ProfileService.search(prefix:limit:)`
 asks for two characters or more of username characters only, escapes `_`, and
 caps at 20 rows.
+
+`reports` captures a complaint about a post or a person (SOL-42) and nothing
+more yet: the review surface is SOL-45, and until it exists reports accumulate
+here, readable by nobody through the API — not even the reporter — and by the
+project owner in the SQL editor: `select * from reports order by created_at
+desc`. That is a known pre-launch state, not an oversight. A report always
+names a person (`reported_profile_id`, filled from the post's author by a
+trigger when a post is named, so the report outlives the post — which is `on
+delete set null`) and optionally the post; `about_post` remembers which kind
+it was once the post is gone, so the one-report-per-person uniqueness cannot
+collide with an old post report and make deleting a post fail. Insert-only
+RLS: the reporter is the caller, and a reported post must pass
+`can_view_post()` for them, so the table cannot be used to probe post ids. A
+repeat report is refused by a partial unique index, which `ReportService`
+treats as success. Reporting is silent to the reported account, and the sheet
+offers a block right after, since the reporter usually wants the content gone
+from their own view now.
 
 Before creating the auth user, sign-up also asks `username_available(text)`
 whether the name is still free. The person asking has no session yet and

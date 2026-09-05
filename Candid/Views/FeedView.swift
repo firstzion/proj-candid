@@ -37,8 +37,14 @@ struct FeedView: View {
     /// confirmation is up; and the failure message if the server refused.
     @State private var postToDelete: FeedPost?
     @State private var isConfirmingDelete = false
-    @State private var deleteError: String?
-    @State private var isShowingDeleteError = false
+    @State private var actionError: String?
+    @State private var isShowingActionError = false
+
+    /// Another person's post being reported (SOL-42), and — once it is — the
+    /// account it was about, so a block can be offered.
+    @State private var reportTarget: ReportSheet.Target?
+    @State private var reportedProfile: Profile?
+    @State private var isOfferingBlock = false
 
     private enum Phase {
         case loading
@@ -124,10 +130,27 @@ struct FeedView: View {
             } message: { _ in
                 Text("The photo is removed for everyone who could see it. This can't be undone.")
             }
-            .alert("Couldn't Delete Post", isPresented: $isShowingDeleteError) {
+            .alert("Something Went Wrong", isPresented: $isShowingActionError) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(deleteError ?? "")
+                Text(actionError ?? "")
+            }
+            .sheet(item: $reportTarget) { target in
+                ReportSheet(target: target) { person in
+                    reportedProfile = person
+                    isOfferingBlock = true
+                }
+            }
+            .confirmationDialog(
+                "Reported. Block them too?",
+                isPresented: $isOfferingBlock,
+                titleVisibility: .visible,
+                presenting: reportedProfile
+            ) { person in
+                Button("Block @\(person.username)", role: .destructive) { Task { await block(person) } }
+                Button("Not Now", role: .cancel) {}
+            } message: { _ in
+                Text("No review queue exists yet, so blocking is how to stop seeing their posts now. You won't see each other's posts, and any follow between you ends. They won't be told.")
             }
             .task {
                 // Runs every time the tab is shown; only fetch when there is
@@ -218,11 +241,10 @@ struct FeedView: View {
         reachedEnd = !page.hasMore
     }
 
-    /// One row, plus the long-press menu its author gets. Only your own
-    /// posts have one for now — Delete (SOL-38); Report on other people's
-    /// posts joins it with SOL-42. Nothing here decides who may delete: the
-    /// `posts` delete policy does, and the menu simply isn't offered where
-    /// the request would match no rows.
+    /// One row, plus its long-press menu: Delete on your own posts (SOL-38),
+    /// Report on other people's (SOL-42). Nothing here decides who may
+    /// delete: the `posts` delete policy does, and the menu simply isn't
+    /// offered where the request would match no rows.
     @ViewBuilder
     private func feedRow(for post: FeedPost) -> some View {
         let row = FeedPostRow(post: post) {
@@ -238,7 +260,26 @@ struct FeedView: View {
                 }
             }
         } else {
-            row
+            row.contextMenu {
+                Button {
+                    reportTarget = .post(post)
+                } label: {
+                    Label("Report…", systemImage: "flag")
+                }
+            }
+        }
+    }
+
+    /// The follow-up a report offers: the same block the profile makes. The
+    /// database severs any follow and hides both sides from each other; the
+    /// refresh that follows takes their posts out of the list.
+    private func block(_ person: Profile) async {
+        do {
+            try await services!.follow.block(person.id)
+            feedInvalidation.markStale()
+        } catch {
+            actionError = error.localizedDescription
+            isShowingActionError = true
         }
     }
 
@@ -256,8 +297,8 @@ struct FeedView: View {
             feedInvalidation.markStale()
         } catch {
             posts.insert(post, at: min(index ?? posts.count, posts.count))
-            deleteError = error.localizedDescription
-            isShowingDeleteError = true
+            actionError = error.localizedDescription
+            isShowingActionError = true
         }
     }
 
