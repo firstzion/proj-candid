@@ -14,9 +14,12 @@ struct SignUpView: View {
     /// Never a success. A sign-up that returns a session emits on the SDK's
     /// auth-state stream, `RootView` swaps to the main tabs, and this view is
     /// torn down before any success message could be read. The one
-    /// non-failure outcome worth reporting is a sign-up that succeeds *without*
-    /// a session, which happens only if email confirmation is re-enabled on the
-    /// project — shown as a notice.
+    /// non-failure outcome worth reporting is a sign-up that succeeds
+    /// *without* a session — the normal result with email confirmations on
+    /// (`supabase/config.toml`), shown as a notice. GoTrue answers the same
+    /// way, on purpose, for an address that already has an account, so
+    /// nobody can use this form to learn which addresses are registered
+    /// (SOL-84) — the notice's wording has to stay true for both.
     @State private var message: FormMessage?
 
     var body: some View {
@@ -94,9 +97,13 @@ struct SignUpView: View {
                 inviteCode: inviteCode
             )
             // On success with a session, RootView takes over and this is moot.
+            // The wording below has to be true whether this address is new
+            // or already has an account — GoTrue answers both the same way
+            // (SOL-84), and revealing which one happened here would defeat
+            // the point.
             message = result.hasActiveSession
                 ? nil
-                : .notice("Account created. Confirm your email address before logging in.")
+                : .notice("Check your email. If that address is new to Candid, we've sent you a confirmation link. If it already has an account, just log in.")
         } catch {
             message = .failure(error.localizedDescription)
         }

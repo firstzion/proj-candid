@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Supabase
 
 enum ProfileError: LocalizedError {
@@ -287,20 +288,32 @@ struct ProfileService {
     private func removeAllStorageObjects(forUserFolder userID: UUID) async throws {
         let folder = userID.uuidString.lowercased()
         let pageSize = 100
-        var offset = 0
 
-        while true {
+        // Always the first page: removing a page shifts what's left down, so
+        // an advancing offset skipped every other page (found in the
+        // 2026-09-04 review) — with 250 objects, originals 0-99 were
+        // removed, the listing at offset 100 then returned 200-249 (also
+        // removed), that page was short so the loop ended, and 100-199 were
+        // never touched. Capped at 1000 iterations, and stopped if a removal
+        // reports nothing removed (a policy refusal can return 200 with an
+        // empty array), as belt and braces against spinning on one page.
+        for _ in 0..<1_000 {
             let page = try await client.storage
                 .from(StorageService.bucket)
-                .list(path: folder, options: SearchOptions(limit: pageSize, offset: offset))
+                .list(path: folder, options: SearchOptions(limit: pageSize))
             guard !page.isEmpty else { return }
 
-            try await client.storage
+            let removed = try await client.storage
                 .from(StorageService.bucket)
                 .remove(paths: page.map { "\(folder)/\($0.name)" })
-
-            if page.count < pageSize { return }
-            offset += pageSize
+            guard !removed.isEmpty else {
+                Logger(subsystem: "com.firstzion.candid", category: "ProfileService")
+                    .error("Storage cleanup for \(folder, privacy: .public) stopped early: removing \(page.count) listed object(s) removed none.")
+                return
+            }
         }
+
+        Logger(subsystem: "com.firstzion.candid", category: "ProfileService")
+            .error("Storage cleanup for \(folder, privacy: .public) stopped after 1000 pages without finishing.")
     }
 }

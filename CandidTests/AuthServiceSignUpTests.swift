@@ -123,4 +123,12 @@ struct PendingInviteTests {
         #expect(PendingInvite.code(from: URL(string: "candid://invite/")!) == nil)
         #expect(PendingInvite.code(from: URL(string: "https://example.com/invite/ABCDE-FGHJK")!) == nil)
     }
+
+    /// SOL-76: signed in, `LogInView` isn't even mounted to consume a code,
+    /// so a link tapped there is held only while signed out.
+    @Test("a code is held only while signed out")
+    func shouldHold() {
+        #expect(PendingInvite.shouldHold(isSignedIn: false) == true)
+        #expect(PendingInvite.shouldHold(isSignedIn: true) == false)
+    }
 }

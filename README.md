@@ -690,8 +690,13 @@ nothing references any more.
 Hosted auth settings live in `supabase/config.toml` under `[auth]` and are applied
 with `supabase config push`. Email confirmation is required
 (`[auth.email] enable_confirmations = true`) — `AuthService.signUp` reports
-whether a session came back, and `SignUpView` shows a "confirm your email"
-notice when it didn't. Sign-up also requires an invite code (see Invites under
+whether a session came back, and `SignUpView` shows a notice when it didn't.
+With confirmations on, GoTrue also answers a sign-up for an address that
+*already* has an account with the same no-session success rather than
+`email_exists`, so the form can never be used to learn which addresses are
+registered — the notice's wording (SOL-84) is written to be true for a new
+address and an existing one alike, without saying which happened. Sign-up
+also requires an invite code (see Invites under
 Schema): the code is checked with `invite_status` before the request and
 enforced by the sign-up trigger, and existing accounts log in unaffected.
 `minimum_password_length` is 10, with no composition

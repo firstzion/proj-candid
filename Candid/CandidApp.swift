@@ -62,12 +62,25 @@ private struct ConfiguredRootScene: View {
             .task { await sessionStore.observe() }
             .onOpenURL { url in
                 if let code = PendingInvite.code(from: url) {
-                    // An invite link (SOL-61). Held for the sign-up form, which
-                    // takes it when it appears; see PendingInvite.
-                    pendingInvite.code = code
+                    // An invite is for someone without an account (SOL-61).
+                    // Held for the sign-up form, which takes it when it
+                    // appears; see PendingInvite. Signed in there is nothing
+                    // to fill in — LogInView isn't even mounted to consume
+                    // it — so holding it anyway just meant it sat until the
+                    // next sign-out, when it surprised whoever logged out
+                    // with a sign-up form and a probably-stale code (SOL-76).
+                    if PendingInvite.shouldHold(isSignedIn: sessionStore.currentUserID != nil) {
+                        pendingInvite.code = code
+                    }
                 } else {
                     Task { await handleAuthCallback(url) }
                 }
+            }
+            .onChange(of: sessionStore.state) { _, state in
+                // A link tapped on the Log In screen, then logged into
+                // rather than signed up with, must not survive into the
+                // next sign-out and reappear as someone else's problem.
+                if case .signedIn = state { pendingInvite.code = nil }
             }
     }
 

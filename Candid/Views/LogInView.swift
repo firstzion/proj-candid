@@ -10,6 +10,10 @@ struct LogInView: View {
 
     /// Pushed by the Sign Up button — and by an invite link arriving, so the
     /// person lands in the form with their code already in it (SOL-61).
+    /// `pendingInvite.code` is only ever set while this view is the one on
+    /// screen, i.e. while signed out (SOL-76) — a link tapped while signed
+    /// in never reaches here, and one left over from an earlier tap is
+    /// cleared at sign-in rather than surfacing at the next sign-out.
     @State private var isShowingSignUp = false
 
     /// Only failures are shown. A successful log in emits on the SDK's
