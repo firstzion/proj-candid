@@ -105,6 +105,10 @@ struct FeedService {
     }
 }
 
+/// `fetchPosts` above already has the shape `PagedPosts` needs; the protocol
+/// exists so a test can supply pages without a stubbed HTTP round trip.
+extension FeedService: PostsPaging {}
+
 /// Decodes one row of `posts` joined with its author's username. `profiles`
 /// comes back as a single embedded object rather than an array, because
 /// `posts.user_id` is a many-to-one foreign key to `profiles.id`.

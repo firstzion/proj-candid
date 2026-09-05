@@ -48,14 +48,10 @@ struct ProfileScreen: View {
     @State private var followCounts: FollowCounts?
     @State private var postCount: Int?
 
-    @State private var posts: [FeedPost] = []
-    @State private var gridPhase: GridPhase = .loading
-    @State private var isLoadingMore = false
-    @State private var reachedEnd = false
-
-    /// Bumped by every successful reload, so a `loadMore` that was in flight
-    /// across one drops its page — see `FeedView.generation`.
-    @State private var generation = 0
+    /// This person's posts, and everything about paging through them
+    /// (SOL-71) — the same model the feed uses, scoped to one author. Built
+    /// in `.task` rather than `init`, since it needs `services`.
+    @State private var paged: PagedPosts?
 
     @State private var isChanging = false
     @State private var message: FormMessage?
@@ -73,12 +69,6 @@ struct ProfileScreen: View {
     @State private var selectedPost: FeedPost?
     @State private var postToDelete: FeedPost?
     @State private var isConfirmingDelete = false
-
-    private enum GridPhase {
-        case loading
-        case loaded
-        case failed(String)
-    }
 
     private static let pageSize = FeedService.defaultLimit
 
@@ -153,11 +143,11 @@ struct ProfileScreen: View {
         .navigationDestination(item: $selectedPost) { post in
             PostDetailView(post: post)
         }
-        .task(id: profile.id) { await load() }
+        .task(id: profile.id) { await load(pagedPosts(for: profile.id)) }
         .onChange(of: feedInvalidation.version) {
             // Something changed what the server would hand back — a post, a
             // follow, a block, a delete, here or elsewhere. Reload all of it.
-            Task { await load() }
+            Task { await load(pagedPosts(for: profile.id)) }
         }
         .confirmationDialog(
             "Block \(profile.username)?",
@@ -281,50 +271,54 @@ struct ProfileScreen: View {
 
     @ViewBuilder
     private var grid: some View {
-        switch gridPhase {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding()
-
-        case .failed(let error):
-            VStack(spacing: 8) {
-                Text(error)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                Button("Try Again") { Task { await reload() } }
-            }
-            .frame(maxWidth: .infinity)
-            .padding()
-
-        case .loaded where posts.isEmpty:
-            if isSelf {
-                EmptyStateView(state: .ownProfileNoPosts) { tabSelection.selected = .post }
-                    .frame(maxWidth: .infinity)
-            } else {
-                // One message for "has no posts" and "has posts you can't
-                // see", on purpose (SOL-40): the count and the grid are read
-                // under RLS, so the two are indistinguishable by construction.
-                EmptyStateView(state: .profileNoVisiblePosts)
-                    .frame(maxWidth: .infinity)
-            }
-
-        case .loaded:
-            LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(posts) { post in
-                    gridCell(for: post)
-                        .onAppear {
-                            if post.id == posts.last?.id {
-                                Task { await loadMore() }
-                            }
-                        }
-                }
-            }
-            if isLoadingMore {
+        if let paged {
+            switch paged.phase {
+            case .loading:
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding()
+
+            case .failed(let error):
+                VStack(spacing: 8) {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                    Button("Try Again") { Task { await paged.refresh() } }
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+
+            case .loaded where paged.posts.isEmpty:
+                if isSelf {
+                    EmptyStateView(state: .ownProfileNoPosts) { tabSelection.selected = .post }
+                        .frame(maxWidth: .infinity)
+                } else {
+                    // One message for "has no posts" and "has posts you can't
+                    // see", on purpose (SOL-40): the count and the grid are read
+                    // under RLS, so the two are indistinguishable by construction.
+                    EmptyStateView(state: .profileNoVisiblePosts)
+                        .frame(maxWidth: .infinity)
+                }
+
+            case .loaded:
+                LazyVGrid(columns: columns, spacing: 2) {
+                    ForEach(paged.posts) { post in
+                        gridCell(for: post)
+                            .onAppear {
+                                if post.id == paged.posts.last?.id {
+                                    Task { await paged.loadMore() }
+                                }
+                            }
+                    }
+                }
+                // A failed page used to land in `message` with nothing to tap;
+                // the footer the feed already had is now shared (SOL-71).
+                LoadMoreFooter(paged: paged)
             }
+        } else {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding()
         }
     }
 
@@ -369,12 +363,22 @@ struct ProfileScreen: View {
 
     // MARK: - Loading
 
+    /// The grid's model, made once and reused — unless the screen is now
+    /// showing someone else, in which case the model it has is the wrong
+    /// person's list and a fresh one is built.
+    private func pagedPosts(for profileID: UUID) -> PagedPosts {
+        if let paged, paged.authorID == profileID { return paged }
+        let model = PagedPosts(source: services.feed, authorID: profileID, pageSize: Self.pageSize)
+        paged = model
+        return model
+    }
+
     /// Everything the screen shows, at once; each piece reports its own
     /// failure. Also what runs again whenever the feed is marked stale.
-    private func load() async {
+    private func load(_ paged: PagedPosts) async {
         let relationshipLoad = Task { await loadRelationship() }
         let countsLoad = Task { await loadCounts() }
-        await reload()
+        await paged.refresh()
         await relationshipLoad.value
         await countsLoad.value
     }
@@ -394,43 +398,6 @@ struct ProfileScreen: View {
             followCounts = try await services.follow.counts(for: profile.id)
             postCount = try await services.profile.postCount(for: profile.id)
         } catch {
-            message = .failure(error.localizedDescription)
-        }
-    }
-
-    /// The newest page of the person's posts, replacing the grid — the same
-    /// operation for the first load and every refresh, for the reasons
-    /// `FeedView.refresh` gives.
-    private func reload() async {
-        do {
-            let page = try await services.feed.fetchPosts(by: profile.id, limit: Self.pageSize)
-            generation += 1
-            posts = page.posts
-            reachedEnd = !page.hasMore
-            gridPhase = .loaded
-        } catch {
-            if posts.isEmpty {
-                gridPhase = .failed(error.localizedDescription)
-            }
-        }
-    }
-
-    private func loadMore() async {
-        guard !isLoadingMore, !reachedEnd else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-
-        let startedIn = generation
-        do {
-            let page = try await services.feed.fetchPosts(
-                by: profile.id, before: posts.last?.cursor, limit: Self.pageSize
-            )
-            guard startedIn == generation else { return }
-            let existing = Set(posts.map(\.id))
-            posts += page.posts.filter { !existing.contains($0.id) }
-            reachedEnd = !page.hasMore
-        } catch {
-            guard startedIn == generation else { return }
             message = .failure(error.localizedDescription)
         }
     }
@@ -513,7 +480,7 @@ struct ProfileScreen: View {
     private func delete(_ post: FeedPost) async {
         do {
             try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
-            posts.removeAll { $0.id == post.id }
+            paged?.remove(id: post.id)
             postCount = postCount.map { max(0, $0 - 1) }
             feedInvalidation.markStale()
         } catch {

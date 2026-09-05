@@ -7,30 +7,17 @@ struct FeedView: View {
     @EnvironmentObject private var sessionStore: SessionStore
     @Environment(TabSelection.self) private var tabSelection
 
-    @State private var posts: [FeedPost] = []
+    /// The posts, and everything about paging through them (SOL-71) — shared
+    /// with the profile grid so the two cannot drift again.
+    ///
+    /// Built in `.task` rather than `init`: it needs `services`, and
+    /// environment values are not readable there. Nil only until the tab is
+    /// first shown.
+    @State private var paged: PagedPosts?
 
     /// Which of the two empties an empty feed is (SOL-40), decided after a
     /// refresh that came back with nothing; nil while that is being decided.
     @State private var feedEmptyState: EmptyState?
-    @State private var phase: Phase = .loading
-    @State private var isLoadingMore = false
-    @State private var reachedEnd = false
-
-    /// When the posts on screen were fetched. Their signed image URLs stop
-    /// resolving `StorageService.signedURLLifetime` after this — see `isStale`.
-    @State private var loadedAt: Date?
-
-    /// Bumped by every successful refresh. A `loadMore` that was in flight
-    /// across a refresh checks it on return and drops its page: that page was
-    /// paginated from a cursor that is no longer in the list, and appending
-    /// it would leave a hole between the fresh head and the old tail.
-    @State private var generation = 0
-
-    /// Why the last `loadMore` failed, shown as a retry row under the posts.
-    /// Swallowing it left someone parked at the bottom with no spinner, no
-    /// message and nothing to tap — the last row's `onAppear` does not fire
-    /// again until it scrolls off and back on.
-    @State private var loadMoreError: String?
 
     /// The author whose username was just tapped; non-nil pushes their
     /// profile. Before search exists this is the one way to reach someone
@@ -48,12 +35,6 @@ struct FeedView: View {
     /// Another person's post being reported (SOL-42).
     @State private var reportTarget: ReportSheet.Target?
 
-    private enum Phase {
-        case loading
-        case loaded
-        case failed(String)
-    }
-
     /// Posts per page. Each page costs two round trips — the rows, then their
     /// signed URLs — so this is the service's default rather than the value of
     /// 8 that had been left in from verifying pagination by hand.
@@ -68,56 +49,10 @@ struct FeedView: View {
     var body: some View {
         NavigationStack {
             Group {
-                switch phase {
-                case .loading:
+                if let paged {
+                    content(for: paged)
+                } else {
                     ProgressView()
-
-                case .loaded where posts.isEmpty:
-                    if let feedEmptyState {
-                        EmptyStateView(state: feedEmptyState) { tabSelection.selected = .people }
-                    } else {
-                        ProgressView()
-                    }
-
-                case .loaded:
-                    List {
-                        ForEach(posts) { post in
-                            feedRow(for: post)
-                                .onAppear {
-                                    if post.id == posts.last?.id {
-                                        Task { await loadMore() }
-                                    }
-                                }
-                        }
-
-                        if isLoadingMore {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                Spacer()
-                            }
-                        } else if let loadMoreError {
-                            VStack(spacing: 8) {
-                                Text(loadMoreError)
-                                    .foregroundStyle(.red)
-                                    .multilineTextAlignment(.center)
-                                Button("Try Again") { Task { await loadMore() } }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                    }
-                    .listStyle(.plain)
-                    .refreshable { await refresh() }
-
-                case .failed(let message):
-                    ContentUnavailableView {
-                        Label("Couldn't Load Feed", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(message)
-                    } actions: {
-                        Button("Try Again") { Task { await refresh() } }
-                    }
                 }
             }
             .navigationTitle("Feed")
@@ -138,67 +73,86 @@ struct FeedView: View {
             .task {
                 // Runs every time the tab is shown; only fetch when there is
                 // nothing on screen or what's there has gone stale.
-                guard posts.isEmpty || isStale else { return }
-                await refresh()
+                let model = paged ?? makePaged()
+                guard model.posts.isEmpty || model.isStale(after: Self.staleAfter) else { return }
+                await refresh(model)
             }
             .onChange(of: scenePhase) { _, newPhase in
                 // Returning from the background after a long absence is how
                 // the feed usually goes stale — and `.task` does not re-run
                 // for that, only for the tab appearing.
-                guard newPhase == .active, isStale else { return }
-                Task { await refresh() }
+                guard newPhase == .active,
+                      let paged,
+                      paged.isStale(after: Self.staleAfter) else { return }
+                Task { await refresh(paged) }
             }
             .onChange(of: feedInvalidation.version) {
                 // A post just succeeded, or the graph just changed — a
                 // follow, unfollow, block or unblock. Refresh regardless of
-                // `isStale`: the person expects to see the result now, not up
+                // staleness: the person expects to see the result now, not up
                 // to half an hour from now, and `refresh` replaces the list,
                 // so rows that are no longer permitted leave with it.
-                Task { await refresh() }
+                guard let paged else { return }
+                Task { await refresh(paged) }
             }
         }
     }
 
-    private var isStale: Bool {
-        guard let loadedAt else { return false }
-        return Date().timeIntervalSince(loadedAt) > Self.staleAfter
+    @ViewBuilder
+    private func content(for paged: PagedPosts) -> some View {
+        switch paged.phase {
+        case .loading:
+            ProgressView()
+
+        case .loaded where paged.posts.isEmpty:
+            if let feedEmptyState {
+                EmptyStateView(state: feedEmptyState) { tabSelection.selected = .people }
+            } else {
+                ProgressView()
+            }
+
+        case .loaded:
+            List {
+                ForEach(paged.posts) { post in
+                    feedRow(for: post)
+                        .onAppear {
+                            if post.id == paged.posts.last?.id {
+                                Task { await paged.loadMore() }
+                            }
+                        }
+                }
+
+                LoadMoreFooter(paged: paged)
+            }
+            .listStyle(.plain)
+            .refreshable { await refresh(paged) }
+
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn't Load Feed", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") { Task { await refresh(paged) } }
+            }
+        }
     }
 
-    /// Fetches the newest page and replaces the feed with it — the initial
-    /// load, pull-to-refresh, and the automatic refresh of a stale feed are
-    /// all the same operation.
-    ///
-    /// Replacing rather than merging is deliberate, for two reasons. Signed
-    /// image URLs expire, and a merge that kept the existing posts kept their
-    /// dead URLs too, so after an hour every image was a placeholder and
-    /// pulling to refresh could not fix it. And a merge that only prepends
-    /// what's new leaves a hole whenever more than a page of posts arrived
-    /// since the last load: the posts between the new head and the old list
-    /// were never fetched, and `loadMore` only ever paginates from the end.
-    /// Starting over from the newest page has neither problem; older pages
-    /// are re-fetched as the user scrolls.
-    private func refresh() async {
-        do {
-            let page = try await services.feed.fetchPosts(limit: Self.pageSize)
-            generation += 1
-            posts = page.posts
-            loadedAt = Date()
-            reachedEnd = !page.hasMore
-            loadMoreError = nil
-            phase = .loaded
-            if page.posts.isEmpty {
-                await decideEmptyState()
-            } else {
-                feedEmptyState = nil
-            }
-        } catch {
-            // A failed refresh with posts already on screen just leaves them
-            // there — the pull-to-refresh spinner dismisses and the user can
-            // try again, rather than the whole feed being replaced by an
-            // error screen over content that was working fine a moment ago.
-            if posts.isEmpty {
-                phase = .failed(error.localizedDescription)
-            }
+    private func makePaged() -> PagedPosts {
+        let model = PagedPosts(source: services.feed, pageSize: Self.pageSize)
+        paged = model
+        return model
+    }
+
+    /// The newest page, replacing the feed — see `PagedPosts.refresh()` for
+    /// why it replaces rather than merges. The only thing that belongs here
+    /// rather than in the model is which empty an empty feed is.
+    private func refresh(_ paged: PagedPosts) async {
+        guard let page = await paged.refresh() else { return }
+        if page.posts.isEmpty {
+            feedEmptyState = await decidedEmptyState()
+        } else {
+            feedEmptyState = nil
         }
     }
 
@@ -208,36 +162,9 @@ struct FeedView: View {
     /// People tab; following people who haven't posted is not a problem to
     /// solve, so it just says so. If the count itself fails, "nothing yet" is
     /// the safer wrong answer: it prompts nothing.
-    private func decideEmptyState() async {
+    private func decidedEmptyState() async -> EmptyState {
         let count = (try? await services.follow.followingCount()) ?? 1
-        feedEmptyState = count == 0 ? .feedFollowingNobody : .feedNothingYet
-    }
-
-    private func loadMore() async {
-        guard !isLoadingMore, !reachedEnd else { return }
-        isLoadingMore = true
-        loadMoreError = nil
-        defer { isLoadingMore = false }
-
-        let startedIn = generation
-        let page: FeedPage
-        do {
-            page = try await services.feed.fetchPosts(before: posts.last?.cursor, limit: Self.pageSize)
-        } catch {
-            // `reachedEnd` stays false, so the retry row under the posts — or
-            // scrolling the last one off and back on, or pulling to refresh —
-            // tries again, rather than the whole feed erroring out over
-            // content that is fine.
-            guard startedIn == generation else { return }
-            loadMoreError = error.localizedDescription
-            return
-        }
-
-        // The feed was refreshed underneath this request — see `generation`.
-        guard startedIn == generation else { return }
-
-        append(page.posts)
-        reachedEnd = !page.hasMore
+        return count == 0 ? .feedFollowingNobody : .feedNothingYet
     }
 
     /// One row, plus its long-press menu: Delete on your own posts (SOL-38),
@@ -284,29 +211,21 @@ struct FeedView: View {
 
     /// Removes the post from the list at once, then asks the server. On
     /// failure the row comes back where it was, with a message. On success
-    /// the feed is marked stale as well, so the next refresh — and, once it
-    /// exists, the profile grid — comes from the server rather than from a
-    /// local edit. Other viewers lose the post at their next refresh, the
-    /// same window every graph change already has.
+    /// the feed is marked stale as well, so the next refresh — and the
+    /// profile grid — comes from the server rather than from a local edit.
+    /// Other viewers lose the post at their next refresh, the same window
+    /// every graph change already has.
     private func delete(_ post: FeedPost) async {
-        let index = posts.firstIndex { $0.id == post.id }
-        posts.removeAll { $0.id == post.id }
+        guard let paged else { return }
+        let index = paged.remove(id: post.id)
         do {
             try await services.post.deletePost(id: post.id, imagePath: post.imagePath)
             feedInvalidation.markStale()
         } catch {
-            posts.insert(post, at: min(index ?? posts.count, posts.count))
+            paged.insert(post, at: index)
             actionError = error.localizedDescription
             isShowingActionError = true
         }
-    }
-
-    /// Appends only posts not already on screen. Keyset pagination should
-    /// never hand back a row twice, but a duplicate `id` in a `List` is a
-    /// runtime warning and a misrendered row, so the check is cheap insurance.
-    private func append(_ page: [FeedPost]) {
-        let existingIDs = Set(posts.map(\.id))
-        posts += page.filter { !existingIDs.contains($0.id) }
     }
 }
 
