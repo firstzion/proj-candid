@@ -32,7 +32,9 @@ real now: counts, a grid, and the follow lists where they may be read
 (SOL-37). And sign-up is invite-only (Milestone 9, SOL-60–62): a new account
 needs a code from someone already here, the trigger that creates its profile
 also redeems the code and makes the two friends, and nobody's first feed is
-empty. You mint and share invites from your own profile (SOL-63).
+empty. You mint and share invites from your own profile (SOL-63), and you
+can change your username there too: once every 30 days, with a name you give
+up held for you for 90 days and old handles still finding you (SOL-41).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -82,7 +84,8 @@ auto-refresh eventually got through. One `ProfileScreen` serves every profile,
 yours and everyone else's (SOL-37): username, three counts — posts, followers,
 following — and a three-column grid of the person's posts, paginated like the
 feed and opening into `PostDetailView`. Your own adds a "Find people" lookup by
-exact username, Log Out and Delete Account; someone else's — from that lookup,
+exact username — current or former — plus Edit Username, Invites, Log Out and
+Delete Account; someone else's — from that lookup,
 from tapping a username in the feed, or from a follower list — shows where you
 stand (following, follows you, friends, blocked) with Follow/Unfollow and
 Block/Unblock; every control changes immediately and changes back with a
@@ -170,7 +173,11 @@ unfollows; and, since SOL-66, that a follow edge is readable only at either
 end or by a mutual of either end while `follow_counts()` answers for anyone;
 and, since Milestone 9, the invite gate itself — sign-ups made the way GoTrue
 makes them, refused and rolled back for a missing, used or expired code,
-admitted and made mutual for a valid one, and the quota holding at five.
+admitted and made mutual for a valid one, and the quota holding at five; and
+the username rules — one change a month with the date in the refusal, a
+released name reserved from others but not from its owner, a sign-up refused
+for a cooling-down name, and an old handle resolving to the current profile
+except for someone the owner has blocked.
 Everything it touches is rolled back. Run it against the hosted
 project after a push and a seed run:
 
@@ -200,7 +207,7 @@ Candid/
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView,
-                      InvitesView
+                      InvitesView, EditUsernameSheet
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -273,6 +280,7 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | `follows` | `follower_id` (→ `profiles`), `followee_id` (→ `profiles`), `created_at`; PK (`follower_id`, `followee_id`), CHECK `follower_id <> followee_id` |
 | `blocks` | `blocker_id` (→ `profiles`), `blocked_id` (→ `profiles`), `created_at`; PK (`blocker_id`, `blocked_id`), CHECK `blocker_id <> blocked_id` |
 | `invites` | `code` (PK), `inviter_id` (→ `profiles`, cascade), `redeemed_by` (→ `profiles`, set null), `redeemed_at`, `created_at`, `expires_at` |
+| `username_history` | `profile_id` (→ `profiles`, cascade), `username`, `changed_at`; PK (`profile_id`, `changed_at`) |
 
 A trigger on `auth.users` (`handle_new_user`) runs inside GoTrue's insert at
 sign-up. Since Milestone 9 it is the whole onboarding transaction: it requires
@@ -397,6 +405,22 @@ rules in `UsernameRules` so the sign-up form can say exactly what is wrong befor
 sending anything: a CHECK failure inside the trigger only reaches the client as
 GoTrue's sanitised "Database error saving new user". Captions are capped at
 2,200 characters the same way, checked client-side before the image is uploaded.
+
+Usernames can change (SOL-41), from your own profile. Two triggers on
+`profiles` enforce the rules where every write passes, sign-up included: one
+change per 30 days — the refusal carries the date the next one is allowed,
+which the app shows — and a name someone else released within the last 90
+days is unavailable, raised as a unique violation so it reads as taken, while
+your own old names are always yours to reclaim. `username_history` records
+each old name (readable by its owner only, written by the trigger),
+`username_available()` knows the cooldown so the form can say so first, and
+`resolve_username(text)` answers an exact current-or-former handle with the
+current profile under the profiles policy's blocked-by rule — what the lookup
+calls, so a handle remembered from a text message still finds the person. The
+feed shows the current name (it joins `profiles`; posts follow the person, not
+the string), and search (SOL-39) matches current names only, with the
+exact-handle fallback for old ones. The trade-off: a rename does not hide you
+from someone who knew the old handle; blocking is the tool for that.
 
 Before creating the auth user, sign-up also asks `username_available(text)`
 whether the name is still free. The person asking has no session yet and

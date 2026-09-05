@@ -30,7 +30,9 @@
 -- the profile's post count from SOL-37 (18: counted under RLS, so it is
 -- "the posts you can see"), and invite-only onboarding from SOL-60/61/62
 -- (19-23: one enum value to the world, own rows only, the gate refuses and
--- rolls back, a good code admits and befriends, the quota holds).
+-- rolls back, a good code admits and befriends, the quota holds), and
+-- changeable usernames from SOL-41 (24: one change per 30 days, released
+-- names reserved 90 days except from their owner, old handles resolve).
 
 begin;
 
@@ -427,6 +429,81 @@ begin
     assert n = 5, format('case 23: alice should be at exactly 5 slots used again, is at %s', n);
     perform pg_temp.act_as_owner();
 
+    -- 24: changeable usernames (SOL-41). One change per 30 days; a released
+    -- name is reserved from everyone else for 90 days — at the trigger, to
+    -- username_available() and to a sign-up alike — and always reclaimable
+    -- by its owner; an old handle resolves to the current profile, except
+    -- for someone the owner has blocked; history is the owner's alone.
+    perform pg_temp.act_as(alice);
+    update public.profiles set username = 'alice' where id = alice;
+    get diagnostics n = row_count;
+    assert n = 1, 'case 24: a no-op rename should pass';
+    select count(*) into n from public.username_history where profile_id = alice;
+    assert n = 0, format('case 24: a no-op rename must not write history, wrote %s', n);
+    update public.profiles set username = 'alice_renamed' where id = alice;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 24: alice should rename herself, updated %s', n);
+    assert (select username from public.profiles where id = alice) = 'alice_renamed', 'case 24: the new name should be stored';
+    select count(*) into n from public.username_history where profile_id = alice and username = 'alice';
+    assert n = 1, format('case 24: the old name should be in history once, is there %s times', n);
+    begin
+        update public.profiles set username = 'alice_again' where id = alice;
+        raise exception 'case 24: a second rename inside 30 days was allowed';
+    exception when check_violation then
+        get stacked diagnostics msg = message_text;
+        assert msg ~ 'changed again on \d{4}-\d{2}-\d{2}$', format('case 24: unexpected refusal: %s', msg);
+    end;
+    perform pg_temp.act_as(bob);
+    begin
+        update public.profiles set username = 'alice' where id = bob;
+        raise exception 'case 24: bob took a name released a moment ago';
+    exception when unique_violation then
+        null;
+    end;
+    perform pg_temp.act_as_anon();
+    assert not public.username_available('alice'), 'case 24: a released name should read unavailable to anon';
+    assert public.username_available('alice_fresh'), 'case 24: an unused name should read available';
+    perform pg_temp.act_as_owner();
+    select code into msg from public.invites
+    where inviter_id = alice and redeemed_at is null and (expires_at is null or expires_at > now())
+    limit 1;
+    declare
+        v_id uuid := gen_random_uuid();
+    begin
+        begin
+            perform pg_temp.sign_up(v_id, 'alice', msg);
+            raise exception 'case 24: a sign-up took a name released a moment ago';
+        exception when unique_violation then
+            null;
+        end;
+        assert not exists (select 1 from auth.users where id = v_id), 'case 24: the refused sign-up left an auth.users row';
+        assert (select redeemed_at from public.invites where code = msg) is null, 'case 24: the refused sign-up must not have spent the code';
+    end;
+    -- The owner's own old name is theirs; only the rate limit stands in the
+    -- way, so the change is backdated past it.
+    update public.username_history set changed_at = changed_at - interval '31 days' where profile_id = alice;
+    perform pg_temp.act_as(alice);
+    assert public.username_available('alice'), 'case 24: the owner should see their released name as available';
+    update public.profiles set username = 'alice' where id = alice;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 24: alice should take her old name back, updated %s', n);
+    perform pg_temp.act_as(carol);
+    select count(*) into n from public.resolve_username('alice_renamed') r where r.id = alice and r.username = 'alice';
+    assert n = 1, format('case 24: the old handle should resolve to alice''s current profile, resolved %s', n);
+    select count(*) into n from public.resolve_username(' ALICE ') r where r.id = alice;
+    assert n = 1, format('case 24: the current handle should resolve, resolved %s', n);
+    select count(*) into n from public.resolve_username('nobody_here');
+    assert n = 0, format('case 24: an unknown handle should resolve to nothing, resolved %s', n);
+    select count(*) into n from public.username_history where profile_id = alice;
+    assert n = 0, format('case 24: carol must read none of alice''s history, reads %s', n);
+    perform pg_temp.act_as_owner();
+    insert into public.blocks (blocker_id, blocked_id) values (alice, judy);
+    perform pg_temp.act_as(judy);
+    select count(*) into n from public.resolve_username('alice_renamed');
+    assert n = 0, format('case 24: someone alice blocked must resolve nothing, resolved %s', n);
+    perform pg_temp.act_as_owner();
+    delete from public.blocks where blocker_id = alice and blocked_id = judy;
+
     -- 10: breaking mutuality takes effect at once — bob's mutuals post leaves
     -- alice's view the moment bob stops following her, while his followers
     -- posts stay, since alice still follows him.
@@ -495,6 +572,14 @@ begin
         'exposure: authenticated cannot execute create_invite';
     assert not has_function_privilege('anon', 'public.handle_new_user()', 'execute'),
         'exposure: anon can execute handle_new_user';
+    assert not has_function_privilege('anon', 'public.resolve_username(text)', 'execute'),
+        'exposure: anon can execute resolve_username';
+    assert has_function_privilege('authenticated', 'public.resolve_username(text)', 'execute'),
+        'exposure: authenticated cannot execute resolve_username';
+    assert has_function_privilege('anon', 'public.username_available(text)', 'execute'),
+        'exposure: anon cannot execute username_available, so sign-up cannot check a name';
+    assert not has_function_privilege('anon', 'public.enforce_username_rules()', 'execute'),
+        'exposure: anon can execute enforce_username_rules';
     assert has_function_privilege('authenticated', 'private.can_view_post(uuid,uuid,public.post_visibility)', 'execute'),
         'exposure: authenticated cannot execute can_view_post';
 

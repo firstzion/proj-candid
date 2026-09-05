@@ -5,34 +5,33 @@ import Supabase
 
 /// `ProfileService.profile(username:)` against canned PostgREST responses.
 /// The lookup is how a person reaches someone they don't yet follow, so what
-/// is pinned is that it asks for exactly the normalised name and treats "no
-/// row" as nil rather than an error — the answer a typo, a stranger's name
-/// and someone who has blocked you must all share.
+/// is pinned is that it asks `resolve_username` for exactly the normalised
+/// name — so a former handle still finds its owner (SOL-41) — and treats "no
+/// row" as nil rather than an error: the answer a typo, a stranger's name and
+/// someone who has blocked you must all share.
 ///
 /// `.serialized`: `StubURLProtocol`'s state is process-global.
 @Suite(.serialized)
 struct ProfileServiceRequestTests {
     private static let aliceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    @Test("the lookup asks for the normalised name and decodes the one row")
+    @Test("the lookup asks resolve_username for the normalised name and decodes the one row")
     func lookupFindsProfile() async throws {
         StubURLProtocol.reset()
         defer { StubURLProtocol.reset() }
-        // `select()` is `*`, so the real response carries created_at too;
-        // Profile must ignore what it doesn't decode.
         StubURLProtocol.setHandler { _ in
-            .init(body: Data(#"[{"id":"\#(Self.aliceID.uuidString.lowercased())","username":"alice","created_at":"2026-09-04T14:04:30.909561+00:00"}]"#.utf8))
+            .init(body: Data(#"[{"id":"\#(Self.aliceID.uuidString.lowercased())","username":"alice"}]"#.utf8))
         }
 
         let profile = try await ProfileService(client: TestSupabaseClient.make()).profile(username: "  Alice ")
         #expect(profile == Profile(id: Self.aliceID, username: "alice"))
 
         let request = try #require(StubURLProtocol.requests.last)
-        #expect(request.httpMethod == "GET")
-        #expect(request.url?.path == "/rest/v1/profiles")
-        let query = request.queryParameters
-        #expect(query["username"] == "eq.alice")
-        #expect(query["limit"] == "1")
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/rest/v1/rpc/resolve_username")
+        struct Params: Decodable { let candidate: String }
+        let params = try JSONDecoder().decode(Params.self, from: try #require(request.drainedBody))
+        #expect(params.candidate == "alice")
     }
 
     @Test("no matching row is nil, not an error")

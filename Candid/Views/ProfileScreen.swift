@@ -3,8 +3,8 @@ import SwiftUI
 /// A person's profile — yours or anyone else's. One screen, switching on "is
 /// this me": the header, the three counts and the grid are the same for
 /// everyone; only the action row differs. Your own has the "Find people"
-/// lookup (until the People tab, SOL-39), Invites (SOL-63), Log Out and
-/// Delete Account, with Edit Username (SOL-41) to come; anyone else's has
+/// lookup (until the People tab, SOL-39), Edit Username (SOL-41), Invites
+/// (SOL-63), Log Out and Delete Account; anyone else's has
 /// Follow/Unfollow and Block/Unblock, with Report (SOL-42) to come. Reached
 /// from the Profile tab, a username in the feed, the lookup, or a follower
 /// list.
@@ -27,6 +27,16 @@ import SwiftUI
 /// than from a local edit.
 struct ProfileScreen: View {
     let profile: Profile
+
+    /// The username as it is now: `profile.username` at first, then whatever
+    /// Edit Username changed it to, so the screen never shows a stale name.
+    @State private var displayedUsername: String
+    @State private var isEditingUsername = false
+
+    init(profile: Profile) {
+        self.profile = profile
+        _displayedUsername = State(initialValue: profile.username)
+    }
 
     @Environment(\.services) private var services
     @Environment(FeedInvalidation.self) private var feedInvalidation
@@ -99,8 +109,16 @@ struct ProfileScreen: View {
             }
             .padding(.vertical)
         }
-        .navigationTitle(profile.username)
+        .navigationTitle(displayedUsername)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isEditingUsername) {
+            EditUsernameSheet(currentUsername: displayedUsername) { newName in
+                displayedUsername = newName
+                // Posts follow the person, not the string: the feed joins
+                // profiles, so a refresh shows the new name on old posts.
+                feedInvalidation.markStale()
+            }
+        }
         .navigationDestination(item: $listKind) { kind in
             FollowListView(profile: profile, kind: kind)
         }
@@ -150,7 +168,7 @@ struct ProfileScreen: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(profile.username)
+            Text(displayedUsername)
                 .font(.title2)
 
             if isSelf {
@@ -209,6 +227,7 @@ struct ProfileScreen: View {
         if isSelf {
             VStack(alignment: .leading, spacing: 12) {
                 findPeople
+                Button("Edit Username") { isEditingUsername = true }
                 NavigationLink {
                     InvitesView()
                 } label: {
