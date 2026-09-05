@@ -131,8 +131,8 @@ struct PostService {
         do {
             try await StorageService(client: client).deletePostImage(at: imagePath)
         } catch {
-            Logger(subsystem: "com.firstzion.candid", category: "PostService")
-                .error("Post \(id.uuidString, privacy: .public) is deleted but its image \(imagePath, privacy: .public) could not be removed: \(error.localizedDescription, privacy: .public)")
+            Log.services
+                .error("PostService.deletePost: post \(id.uuidString, privacy: .public) is deleted but its image \(imagePath, privacy: .public) could not be removed: \(serverMessage(of: error), privacy: .public)")
         }
     }
 
@@ -157,12 +157,14 @@ struct PostService {
     }
 
     static func mapSessionError(_ error: Error) -> PostError {
-        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
+        SessionFailure.isMissingSession(error)
+            ? .notSignedIn
+            : .other(fallbackMessage(for: error, context: "PostService.mapSessionError"))
     }
 
     static func mapPostError(_ error: Error) -> PostError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "PostService.mapPostError"))
         }
 
         // 42501 is Postgres' insufficient_privilege, which is how an RLS
@@ -173,7 +175,7 @@ struct PostService {
             return .notPermitted(postgrestError.message)
         }
 
-        return .other(serverMessage(of: error))
+        return .other(fallbackMessage(for: error, context: "PostService.mapPostError"))
     }
 }
 

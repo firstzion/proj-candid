@@ -336,12 +336,14 @@ struct FollowService {
     }
 
     static func mapSessionError(_ error: Error) -> FollowError {
-        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
+        SessionFailure.isMissingSession(error)
+            ? .notSignedIn
+            : .other(fallbackMessage(for: error, context: "FollowService.mapSessionError"))
     }
 
     static func mapFollowError(_ error: Error) -> FollowError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "FollowService.mapFollowError"))
         }
 
         switch postgrestError.code ?? "" {
@@ -361,7 +363,7 @@ struct FollowService {
             if postgrestError.message.lowercased().contains("row-level security") {
                 return .notPermitted
             }
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "FollowService.mapFollowError"))
         }
     }
 }

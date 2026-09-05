@@ -108,7 +108,7 @@ struct StorageService {
 
     static func mapStorageError(_ error: Error) -> StorageServiceError {
         guard let storageError = error as? StorageError else {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "StorageService.mapStorageError"))
         }
 
         if storageError.statusCode == "403"
@@ -116,7 +116,7 @@ struct StorageService {
             return .notPermitted(storageError.message)
         }
 
-        return .other(serverMessage(of: error))
+        return .other(fallbackMessage(for: error, context: "StorageService.mapStorageError"))
     }
 
     static func jpegData(for image: UIImage) -> Data? {

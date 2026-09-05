@@ -174,7 +174,7 @@ struct AuthService {
         do {
             return try await InviteService(client: client).status(code: code)
         } catch {
-            throw SignUpError.other(error.localizedDescription)
+            throw SignUpError.other(fallbackMessage(for: error, context: "AuthService.inviteStatus"))
         }
     }
 
@@ -197,10 +197,8 @@ struct AuthService {
     /// Matches on `AuthError.errorCode` rather than on message text, so
     /// rewording on Supabase's side cannot silently break the mapping.
     static func mapSignInError(_ error: Error) -> SignInError {
-        let message = error.localizedDescription
-
         guard let authError = error as? AuthError else {
-            return .other(message)
+            return .other(fallbackMessage(for: error, context: "AuthService.mapSignInError"))
         }
 
         switch authError.errorCode {
@@ -209,7 +207,7 @@ struct AuthService {
         case .emailNotConfirmed:
             return .emailNotConfirmed
         default:
-            return .other(message)
+            return .other(fallbackMessage(for: error, context: "AuthService.mapSignInError"))
         }
     }
 
@@ -218,16 +216,19 @@ struct AuthService {
     /// Matches on `AuthError.errorCode` rather than on message text, with one
     /// unavoidable exception noted below.
     static func mapSignUpError(_ error: Error) -> SignUpError {
+        // The server's raw text, which the two matches below read and which
+        // `.weakPassword` passes through deliberately. It is never what goes
+        // on screen for an unrecognised failure — that is `fallbackMessage`.
         let message = error.localizedDescription
 
         // From the availability pre-check, which speaks PostgREST rather than
         // GoTrue.
         if error is PostgrestError {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "AuthService.mapSignUpError"))
         }
 
         guard let authError = error as? AuthError else {
-            return .other(message)
+            return .other(fallbackMessage(for: error, context: "AuthService.mapSignUpError"))
         }
 
         // A duplicate username fails inside the profiles trigger, and Supabase
@@ -273,10 +274,12 @@ struct AuthService {
         case .validationFailed:
             // Only email format is validated today, but the code is generic,
             // so confirm before claiming it is the email.
-            return lowercased.contains("email") ? .invalidEmail : .other(message)
+            return lowercased.contains("email")
+                ? .invalidEmail
+                : .other(fallbackMessage(for: error, context: "AuthService.mapSignUpError"))
 
         default:
-            return .other(message)
+            return .other(fallbackMessage(for: error, context: "AuthService.mapSignUpError"))
         }
     }
 

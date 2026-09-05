@@ -107,15 +107,16 @@ struct SignUpErrorMappingTests {
     @Test("a non-auth error falls through rather than being mislabelled")
     func nonAuthError() {
         let mapped = AuthService.mapSignUpError(URLError(.notConnectedToInternet))
-        guard case .other = mapped else {
+        guard case .other(let message) = mapped else {
             Issue.record("expected .other, got \(mapped)")
             return
         }
+        #expect(message.contains("offline"))
     }
 
     /// The availability pre-check speaks PostgREST, not GoTrue. PostgrestError
     /// is not a LocalizedError, so its localizedDescription is boilerplate.
-    @Test("a PostgREST error from the availability check surfaces the server's message")
+    @Test("a PostgREST error from the availability check carries the server's message")
     func postgrestErrorSurvives() {
         let mapped = AuthService.mapSignUpError(
             PostgrestError(code: "42883", message: "function public.username_available(text) does not exist")
@@ -124,7 +125,8 @@ struct SignUpErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
-        #expect(message == "function public.username_available(text) does not exist")
+        #expect(message.contains("Something went wrong"))
+        #expect(message.contains("function public.username_available(text) does not exist"))
     }
 }
 
@@ -183,7 +185,7 @@ struct ProfileErrorMappingTests {
     /// Regression test. PostgrestError is a plain Error, not a LocalizedError,
     /// so reading `localizedDescription` yields Foundation boilerplate and the
     /// server's actual complaint is lost. The mapper must read `message`.
-    @Test("other PostgREST errors surface the server's message, not boilerplate")
+    @Test("an unrecognised PostgREST error carries the server's words, not boilerplate")
     func serverMessageSurvives() {
         let mapped = ProfileService.mapProfileError(
             PostgrestError(code: "42501", message: "permission denied for table profiles")
@@ -192,7 +194,8 @@ struct ProfileErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
-        #expect(message == "permission denied for table profiles")
+        #expect(message.contains("Something went wrong"))
+        #expect(message.contains("permission denied for table profiles"))
         #expect(!message.contains("The operation couldn"))
     }
 
@@ -252,7 +255,7 @@ struct StorageErrorMappingTests {
     }
 
     /// Same boilerplate trap as PostgrestError: StorageError is a plain Error.
-    @Test("other storage errors surface the server's message, not boilerplate")
+    @Test("an unrecognised storage error carries the server's words, not boilerplate")
     func serverMessageSurvives() {
         let mapped = StorageService.mapStorageError(
             StorageError(statusCode: "413", message: "The object exceeded the maximum allowed size", error: nil)
@@ -261,7 +264,8 @@ struct StorageErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
-        #expect(message == "The object exceeded the maximum allowed size")
+        #expect(message.contains("Something went wrong"))
+        #expect(message.contains("The object exceeded the maximum allowed size"))
     }
 }
 
@@ -296,7 +300,7 @@ struct PostServiceTests {
         }
     }
 
-    @Test("other PostgREST errors surface the server's message, not boilerplate")
+    @Test("an unrecognised PostgREST error carries the server's words, not boilerplate")
     func serverMessageSurvives() {
         let mapped = PostService.mapPostError(
             PostgrestError(code: "23503", message: "insert or update on table \"posts\" violates foreign key constraint")
@@ -305,6 +309,7 @@ struct PostServiceTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
+        #expect(message.contains("Something went wrong"))
         #expect(message.contains("foreign key constraint"))
     }
 
@@ -349,7 +354,7 @@ struct PostServiceTests {
 @Suite("Feed error mapping")
 struct FeedErrorMappingTests {
     /// Same boilerplate trap as the other PostgrestError mappers.
-    @Test("PostgREST errors surface the server's message, not boilerplate")
+    @Test("PostgREST errors carry the server's words, not boilerplate")
     func serverMessageSurvives() {
         let mapped = FeedService.mapFeedError(
             PostgrestError(code: "42501", message: "permission denied for table posts")
@@ -358,16 +363,22 @@ struct FeedErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
-        #expect(message == "permission denied for table posts")
+        #expect(message.contains("Something went wrong"))
+        #expect(message.contains("permission denied for table posts"))
     }
 
-    @Test("a non-PostgREST error falls through")
+    /// Proof that the network shortcut reaches the screen through a real
+    /// mapper, not only through `fallbackMessage` in isolation: being offline
+    /// is the one failure here the person can act on.
+    @Test("a dropped connection is named as being offline")
     func nonPostgrestError() {
         let mapped = FeedService.mapFeedError(URLError(.notConnectedToInternet))
-        guard case .other = mapped else {
+        guard case .other(let message) = mapped else {
             Issue.record("expected .other, got \(mapped)")
             return
         }
+        #expect(message.contains("offline"))
+        #expect(!message.contains("Something went wrong"))
     }
 }
 
@@ -418,7 +429,7 @@ struct FollowErrorMappingTests {
     }
 
     /// Same boilerplate trap as the other PostgrestError mappers.
-    @Test("other PostgREST errors surface the server's message, not boilerplate")
+    @Test("an unrecognised PostgREST error carries the server's words, not boilerplate")
     func serverMessageSurvives() {
         let mapped = FollowService.mapFollowError(
             PostgrestError(code: "42P01", message: #"relation "public.follows" does not exist"#)
@@ -427,16 +438,19 @@ struct FollowErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
-        #expect(message == #"relation "public.follows" does not exist"#)
+        #expect(message.contains("Something went wrong"))
+        #expect(message.contains(#"relation "public.follows" does not exist"#))
     }
 
-    @Test("a non-PostgREST error falls through")
+    @Test("a timeout is named as one rather than folded into the generic sentence")
     func nonPostgrestError() {
         let mapped = FollowService.mapFollowError(URLError(.timedOut))
-        guard case .other = mapped else {
+        guard case .other(let message) = mapped else {
             Issue.record("expected .other, got \(mapped)")
             return
         }
+        #expect(message.contains("took too long"))
+        #expect(!message.contains("Something went wrong"))
     }
 
     /// The composite primary key refusing a second identical edge. `follow`
@@ -467,5 +481,70 @@ struct FollowErrorMappingTests {
             Issue.record("expected .other, got \(mapped)")
             return
         }
+    }
+}
+
+/// The wording an unrecognised failure lands on, in both build configurations.
+///
+/// The mapper suites above exercise only the Debug wording, because they call
+/// the mappers and the mappers take the default. This is where the Release
+/// wording is pinned — which is the whole reason `fallbackMessage` takes
+/// `includeDetail` as a parameter instead of reading `#if DEBUG` in its body:
+/// CI builds Debug, so a compile-time branch would have left the wording real
+/// users see untested in every run.
+@Suite("Fallback error wording")
+struct FallbackMessageTests {
+    private let serverDetail = "permission denied for table posts"
+
+    private var postgrestFailure: PostgrestError {
+        PostgrestError(code: "42501", message: serverDetail)
+    }
+
+    @Test("a Debug build carries the server's words, so a failure is diagnosable on sight")
+    func debugCarriesDetail() {
+        let message = fallbackMessage(for: postgrestFailure, context: "test", includeDetail: true)
+        #expect(message.contains("Something went wrong"))
+        #expect(message.contains(serverDetail))
+    }
+
+    /// The card's point: no PostgREST, Storage or GoTrue wording reaches a
+    /// person. Asserted as an exact string rather than a `!contains`, so a
+    /// future edit that starts appending something has to come through here.
+    @Test("a Release build shows none of the server's wording")
+    func releaseHidesDetail() {
+        let message = fallbackMessage(for: postgrestFailure, context: "test", includeDetail: false)
+        #expect(message == "Something went wrong. Try again.")
+    }
+
+    /// Being offline is the one failure the person can fix, so it says so —
+    /// and says the same thing in both builds, since there is no server
+    /// detail worth appending to it.
+    @Test("being offline says so, in either build")
+    func offline() {
+        let expected = "You're offline. Check your connection and try again."
+        #expect(fallbackMessage(for: URLError(.notConnectedToInternet), context: "test", includeDetail: true) == expected)
+        #expect(fallbackMessage(for: URLError(.notConnectedToInternet), context: "test", includeDetail: false) == expected)
+    }
+
+    @Test("a connection lost mid-request reads the same as being offline")
+    func connectionLost() {
+        let message = fallbackMessage(for: URLError(.networkConnectionLost), context: "test", includeDetail: false)
+        #expect(message.contains("offline"))
+    }
+
+    @Test("a timeout gets its own sentence, in either build")
+    func timedOut() {
+        let expected = "That took too long. Try again."
+        #expect(fallbackMessage(for: URLError(.timedOut), context: "test", includeDetail: true) == expected)
+        #expect(fallbackMessage(for: URLError(.timedOut), context: "test", includeDetail: false) == expected)
+    }
+
+    /// Any other `URLError` is not something the person can act on, so it
+    /// takes the generic path rather than inventing a network explanation for
+    /// what may not be one.
+    @Test("an unrelated URLError takes the generic path")
+    func otherURLError() {
+        let message = fallbackMessage(for: URLError(.badServerResponse), context: "test", includeDetail: false)
+        #expect(message == "Something went wrong. Try again.")
     }
 }

@@ -125,12 +125,14 @@ struct InviteService {
     }
 
     static func mapSessionError(_ error: Error) -> InviteError {
-        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
+        SessionFailure.isMissingSession(error)
+            ? .notSignedIn
+            : .other(fallbackMessage(for: error, context: "InviteService.mapSessionError"))
     }
 
     static func mapError(_ error: Error) -> InviteError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "InviteService.mapError"))
         }
         // create_invite() raises check_violation with this exact message.
         if postgrestError.code == "23514" && postgrestError.message.contains("invite quota reached") {
@@ -139,7 +141,7 @@ struct InviteService {
         if postgrestError.message == "not signed in" {
             return .notSignedIn
         }
-        return .other(serverMessage(of: error))
+        return .other(fallbackMessage(for: error, context: "InviteService.mapError"))
     }
 }
 

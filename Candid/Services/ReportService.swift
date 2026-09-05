@@ -121,7 +121,7 @@ struct ReportService {
 
     static func mapReportError(_ error: Error) -> ReportError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "ReportService.mapReportError"))
         }
         switch postgrestError.code ?? "" {
         case "23514":
@@ -133,7 +133,7 @@ struct ReportService {
             if postgrestError.message.lowercased().contains("row-level security") {
                 return .notPermitted
             }
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "ReportService.mapReportError"))
         }
     }
 
@@ -141,7 +141,9 @@ struct ReportService {
         do {
             return try await currentUserID()
         } catch {
-            throw SessionFailure.isMissingSession(error) ? ReportError.notSignedIn : .other(serverMessage(of: error))
+            throw SessionFailure.isMissingSession(error)
+                ? ReportError.notSignedIn
+                : .other(fallbackMessage(for: error, context: "ReportService.sessionUserID"))
         }
     }
 }

@@ -169,7 +169,7 @@ struct ProfileService {
     /// The trigger's two refusals and the unique constraint, in the app's words.
     static func mapUsernameChangeError(_ error: Error) -> ProfileError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(error.localizedDescription)
+            return .other(fallbackMessage(for: error, context: "ProfileService.mapUsernameChangeError"))
         }
         switch postgrestError.code {
         case "23505":
@@ -223,12 +223,14 @@ struct ProfileService {
     }
 
     static func mapSessionError(_ error: Error) -> ProfileError {
-        SessionFailure.isMissingSession(error) ? .notSignedIn : .other(serverMessage(of: error))
+        SessionFailure.isMissingSession(error)
+            ? .notSignedIn
+            : .other(fallbackMessage(for: error, context: "ProfileService.mapSessionError"))
     }
 
     static func mapProfileError(_ error: Error) -> ProfileError {
         guard let postgrestError = error as? PostgrestError else {
-            return .other(serverMessage(of: error))
+            return .other(fallbackMessage(for: error, context: "ProfileService.mapProfileError"))
         }
 
         // PostgREST returns PGRST116 when `.single()` matches no rows, which
@@ -238,7 +240,7 @@ struct ProfileService {
             return .profileMissing
         }
 
-        return .other(serverMessage(of: error))
+        return .other(fallbackMessage(for: error, context: "ProfileService.mapProfileError"))
     }
 
     /// Permanently deletes the signed-in user's account: the `auth.users` row
@@ -295,13 +297,13 @@ struct ProfileService {
                 .from(StorageService.bucket)
                 .remove(paths: page.map { "\(folder)/\($0.name)" })
             guard !removed.isEmpty else {
-                Logger(subsystem: "com.firstzion.candid", category: "ProfileService")
-                    .error("Storage cleanup for \(folder, privacy: .public) stopped early: removing \(page.count) listed object(s) removed none.")
+                Log.services
+                    .error("ProfileService: storage cleanup for \(folder, privacy: .public) stopped early: removing \(page.count) listed object(s) removed none.")
                 return
             }
         }
 
-        Logger(subsystem: "com.firstzion.candid", category: "ProfileService")
-            .error("Storage cleanup for \(folder, privacy: .public) stopped after 1000 pages without finishing.")
+        Log.services
+            .error("ProfileService: storage cleanup for \(folder, privacy: .public) stopped after 1000 pages without finishing.")
     }
 }

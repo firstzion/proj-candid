@@ -101,7 +101,7 @@ struct FeedService {
     }
 
     static func mapFeedError(_ error: Error) -> FeedServiceError {
-        .other(serverMessage(of: error))
+        .other(fallbackMessage(for: error, context: "FeedService.mapFeedError"))
     }
 }
 
