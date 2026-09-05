@@ -119,7 +119,7 @@ struct FeedServiceDecodingTests {
         #expect(paginatedRequest.url?.absoluteString.contains("%2B") == true)
     }
 
-    @Test("a PostgrestError body maps to FeedServiceError.other with the server's message")
+    @Test("a PostgrestError body maps to FeedServiceError.other carrying the server's message")
     func postgrestErrorMapsThrough() async throws {
         let stub = TestSupabaseClient.make()
 
@@ -138,7 +138,10 @@ struct FeedServiceDecodingTests {
                 Issue.record("expected .other, got \(error)")
                 return
             }
-            #expect(message == "permission denied for table posts")
+            // Since SOL-78 the screen gets our sentence and the server's words
+            // ride along in Debug only; the log is where they always go.
+            #expect(message.contains("Something went wrong"))
+            #expect(message.contains("permission denied for table posts"))
         }
     }
 
