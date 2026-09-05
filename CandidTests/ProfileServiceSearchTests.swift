@@ -8,23 +8,24 @@ import Supabase
 /// one. Who appears in the results is the view's and RLS's business, not the
 /// client's, so the shape of the ask is what matters here.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct ProfileServiceSearchTests {
     private static let aliceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     @Test("search asks the view for a prefix match on current names, normalised and capped")
     func searchRequest() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in
             .init(body: Data(#"[{"id":"\#(Self.aliceID.uuidString.lowercased())","username":"alice"}]"#.utf8))
         }
 
-        let results = try await ProfileService(client: TestSupabaseClient.make()).search(prefix: " Al ")
+        let results = try await ProfileService(client: stub.client).search(prefix: " Al ")
         #expect(results == [Profile(id: Self.aliceID, username: "alice")])
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.httpMethod == "GET")
         #expect(request.url?.path == "/rest/v1/searchable_profiles")
         let query = request.queryParameters
@@ -36,13 +37,12 @@ struct ProfileServiceSearchTests {
     /// `_` is a LIKE wildcard; in a username it is a character.
     @Test("an underscore in the prefix means itself")
     func underscoreIsEscaped() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(body: Data("[]".utf8)) }
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in .init(body: Data("[]".utf8)) }
 
-        _ = try await ProfileService(client: TestSupabaseClient.make()).search(prefix: "a_")
+        _ = try await ProfileService(client: stub.client).search(prefix: "a_")
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.queryParameters["username"] == #"like.a\_%"#)
     }
 
@@ -50,15 +50,14 @@ struct ProfileServiceSearchTests {
     /// hold: nothing could match, so nothing is asked.
     @Test("a short or impossible prefix is answered empty without a request")
     func shortOrImpossiblePrefix() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 500, body: Data()) }
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in .init(statusCode: 500, body: Data()) }
 
-        let service = ProfileService(client: TestSupabaseClient.make())
+        let service = ProfileService(client: stub.client)
         for prefix in ["", "a", " A ", "él", "al ice", "al-"] {
             let results = try await service.search(prefix: prefix)
             #expect(results.isEmpty, "\(prefix) should be answered empty")
         }
-        #expect(StubURLProtocol.requests.isEmpty)
+        #expect(stub.requests.isEmpty)
     }
 }

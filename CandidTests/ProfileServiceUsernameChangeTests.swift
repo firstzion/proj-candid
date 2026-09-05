@@ -7,24 +7,26 @@ import Supabase
 /// refusals the database can answer with — a taken (or reserved) name, and a
 /// change made too soon, which carries the date the next one is allowed.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct ProfileServiceUsernameChangeTests {
     private static let me = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    private static func makeService() -> ProfileService {
-        ProfileService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
+    private static func makeService() -> (ProfileService, TestSupabaseClient.StubbedClient) {
+        let stub = TestSupabaseClient.make()
+        return (ProfileService(client: stub.client, currentUserID: { Self.me }), stub)
     }
 
     @Test("changeUsername updates the caller's own row with the normalised name")
     func changeUpdatesOwnRow() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 204, body: Data()) }
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in .init(statusCode: 204, body: Data()) }
 
-        try await Self.makeService().changeUsername(to: "  Alice_Renamed ")
+        try await service.changeUsername(to: "  Alice_Renamed ")
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.httpMethod == "PATCH")
         #expect(request.url?.path == "/rest/v1/profiles")
         #expect(request.queryParameters["id"] == "eq.\(Self.me.uuidString)")
@@ -35,25 +37,23 @@ struct ProfileServiceUsernameChangeTests {
 
     @Test("a name the rules refuse is refused here, without a request")
     func invalidNameSkipsRequest() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 500, body: Data()) }
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in .init(statusCode: 500, body: Data()) }
 
         await #expect(throws: ProfileError.self) {
-            try await Self.makeService().changeUsername(to: "Alice Smith")
+            try await service.changeUsername(to: "Alice Smith")
         }
-        #expect(StubURLProtocol.requests.isEmpty)
+        #expect(stub.requests.isEmpty)
     }
 
     @Test("isUsernameAvailable asks username_available with the normalised name")
     func availability() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(body: Data("false".utf8)) }
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in .init(body: Data("false".utf8)) }
 
-        let available = try await Self.makeService().isUsernameAvailable(" Alice ")
+        let available = try await service.isUsernameAvailable(" Alice ")
         #expect(available == false)
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.url?.path == "/rest/v1/rpc/username_available")
         struct Params: Decodable { let candidate: String }
         let params = try JSONDecoder().decode(Params.self, from: try #require(request.drainedBody))

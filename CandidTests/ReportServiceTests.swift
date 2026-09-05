@@ -8,14 +8,17 @@ import Supabase
 /// refusal that must stay vague. Who may report what is the insert policy's
 /// business, not the client's.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct ReportServiceTests {
     private static let me = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
     private static let alice = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    private static func makeService() -> ReportService {
-        ReportService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
+    private static func makeService() -> (ReportService, TestSupabaseClient.StubbedClient) {
+        let stub = TestSupabaseClient.make()
+        return (ReportService(client: stub.client, currentUserID: { Self.me }), stub)
     }
 
     private static func post() -> FeedPost {
@@ -36,14 +39,13 @@ struct ReportServiceTests {
 
     @Test("reporting a post names the post and its author, with trimmed details")
     func postReport() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 201, body: Data()) }
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in .init(statusCode: 201, body: Data()) }
 
         let post = Self.post()
-        try await Self.makeService().report(post: post, reason: .harassment, details: "  not okay  ")
+        try await service.report(post: post, reason: .harassment, details: "  not okay  ")
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/rest/v1/reports")
         let row = try JSONDecoder().decode(Row.self, from: try #require(request.drainedBody))
@@ -56,13 +58,12 @@ struct ReportServiceTests {
 
     @Test("reporting a person names no post, and blank details are left out")
     func profileReport() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 201, body: Data()) }
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in .init(statusCode: 201, body: Data()) }
 
-        try await Self.makeService().report(profile: Profile(id: Self.alice, username: "alice"), reason: .impersonation, details: "   ")
+        try await service.report(profile: Profile(id: Self.alice, username: "alice"), reason: .impersonation, details: "   ")
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         let body = try #require(request.drainedBody)
         let row = try JSONDecoder().decode(Row.self, from: body)
         #expect(row.reported_profile_id == Self.alice)
@@ -76,24 +77,22 @@ struct ReportServiceTests {
 
     @Test("a repeat report is success, not an error")
     func repeatIsSuccess() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in
             .init(statusCode: 409, body: Data(#"{"code":"23505","message":"duplicate key value violates unique constraint \"reports_one_per_post\""}"#.utf8))
         }
-        try await Self.makeService().report(post: Self.post(), reason: .spam, details: nil)
+        try await service.report(post: Self.post(), reason: .spam, details: nil)
     }
 
     @Test("details over the limit are refused before any request")
     func detailsTooLong() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 500, body: Data()) }
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in .init(statusCode: 500, body: Data()) }
 
         await #expect(throws: ReportError.self) {
-            try await Self.makeService().report(post: Self.post(), reason: .other, details: String(repeating: "a", count: ReportService.maxDetailsLength + 1))
+            try await service.report(post: Self.post(), reason: .other, details: String(repeating: "a", count: ReportService.maxDetailsLength + 1))
         }
-        #expect(StubURLProtocol.requests.isEmpty)
+        #expect(stub.requests.isEmpty)
     }
 
     /// The policy refuses a post the reporter cannot see; the wording must

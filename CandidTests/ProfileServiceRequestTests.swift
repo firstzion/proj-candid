@@ -10,23 +10,24 @@ import Supabase
 /// row" as nil rather than an error: the answer a typo, a stranger's name and
 /// someone who has blocked you must all share.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct ProfileServiceRequestTests {
     private static let aliceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     @Test("the lookup asks resolve_username for the normalised name and decodes the one row")
     func lookupFindsProfile() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in
             .init(body: Data(#"[{"id":"\#(Self.aliceID.uuidString.lowercased())","username":"alice"}]"#.utf8))
         }
 
-        let profile = try await ProfileService(client: TestSupabaseClient.make()).profile(username: "  Alice ")
+        let profile = try await ProfileService(client: stub.client).profile(username: "  Alice ")
         #expect(profile == Profile(id: Self.aliceID, username: "alice"))
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/rest/v1/rpc/resolve_username")
         struct Params: Decodable { let candidate: String }
@@ -36,11 +37,10 @@ struct ProfileServiceRequestTests {
 
     @Test("no matching row is nil, not an error")
     func lookupMisses() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(body: Data("[]".utf8)) }
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in .init(body: Data("[]".utf8)) }
 
-        let profile = try await ProfileService(client: TestSupabaseClient.make()).profile(username: "nobody")
+        let profile = try await ProfileService(client: stub.client).profile(username: "nobody")
         #expect(profile == nil)
     }
 
@@ -49,16 +49,15 @@ struct ProfileServiceRequestTests {
     /// identical to a miss.
     @Test("a name that cannot exist is answered nil without a request")
     func impossibleNameSkipsRequest() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 500, body: Data()) }
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in .init(statusCode: 500, body: Data()) }
 
-        let service = ProfileService(client: TestSupabaseClient.make())
+        let service = ProfileService(client: stub.client)
         for name in ["", "él", "ab", "alice smith"] {
             let profile = try await service.profile(username: name)
             #expect(profile == nil, "\(name) should be answered nil")
         }
-        #expect(StubURLProtocol.requests.isEmpty)
+        #expect(stub.requests.isEmpty)
     }
 }
 
@@ -67,23 +66,24 @@ struct ProfileServiceRequestTests {
 /// followers tier for a one-way follower, zero for a stranger — and the true
 /// total is never sent to anyone else (SOL-37, SOL-40).
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct ProfileServicePostCountTests {
     private static let aliceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     @Test("postCount asks the server to count one author's rows, with a HEAD request")
     func postCountIsAHeadRequest() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in
             .init(statusCode: 200, body: Data(), headers: ["Content-Range": "0-1/2", "Content-Type": "application/json"])
         }
 
-        let count = try await ProfileService(client: TestSupabaseClient.make()).postCount(for: Self.aliceID)
+        let count = try await ProfileService(client: stub.client).postCount(for: Self.aliceID)
         #expect(count == 2)
 
-        let request = try #require(StubURLProtocol.requests.last)
+        let request = try #require(stub.requests.last)
         #expect(request.httpMethod == "HEAD")
         #expect(request.url?.path == "/rest/v1/posts")
         #expect(request.queryParameters["user_id"] == "eq.\(Self.aliceID.uuidString)")
@@ -97,8 +97,10 @@ struct ProfileServicePostCountTests {
 /// — and the loop stops the moment a listing comes back empty rather than
 /// paging past the end.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct ProfileServiceDeleteAccountTests {
     private static let me = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     private static let listPath = "/storage/v1/object/list/post-images"
@@ -106,8 +108,7 @@ struct ProfileServiceDeleteAccountTests {
 
     @Test("every object is removed regardless of count, with no list request carrying a non-zero offset")
     func removesAllObjectsWithoutAdvancingOffset() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
+        let stub = TestSupabaseClient.make()
 
         let folder = Self.me.uuidString.lowercased()
         let allNames = (0..<150).map { "photo\($0).jpg" }
@@ -117,7 +118,7 @@ struct ProfileServiceDeleteAccountTests {
         let pages = [Array(allNames[0..<100]), Array(allNames[100..<150]), []]
         let listCallIndex = Counter()
 
-        StubURLProtocol.setHandler { request in
+        stub.setHandler { request in
             switch request.url?.path {
             case "/rest/v1/rpc/delete_own_account":
                 return .init(statusCode: 204, body: Data())
@@ -134,11 +135,11 @@ struct ProfileServiceDeleteAccountTests {
             }
         }
 
-        let service = ProfileService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
+        let service = ProfileService(client: stub.client, currentUserID: { Self.me })
         try await service.deleteAccount()
 
         struct ListBody: Decodable { let offset: Int? }
-        let listRequests = StubURLProtocol.requests.filter { $0.url?.path == Self.listPath }
+        let listRequests = stub.requests.filter { $0.url?.path == Self.listPath }
         #expect(listRequests.count == 3, "expected a list call per page plus the terminating empty one")
         for request in listRequests {
             let body = try JSONDecoder().decode(ListBody.self, from: try #require(request.drainedBody))
@@ -146,7 +147,7 @@ struct ProfileServiceDeleteAccountTests {
         }
 
         struct RemoveBody: Decodable { let prefixes: [String] }
-        let removeRequests = StubURLProtocol.requests.filter { $0.url?.path == Self.removePath }
+        let removeRequests = stub.requests.filter { $0.url?.path == Self.removePath }
         let removedPaths = try removeRequests.flatMap { request in
             try JSONDecoder().decode(RemoveBody.self, from: try #require(request.drainedBody)).prefixes
         }

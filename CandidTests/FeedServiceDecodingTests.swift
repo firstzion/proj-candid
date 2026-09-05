@@ -11,10 +11,10 @@ import Supabase
 /// response shapes, stubbed at the `URLProtocol` level via a `FeedService`
 /// built with dependency injection (SOL-47) — no live project required.
 ///
-/// `.serialized`: `StubURLProtocol`'s handler and recorded requests are
-/// process-global, so tests that install their own handler would stomp on
-/// each other if Swift Testing ran them concurrently.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct FeedServiceDecodingTests {
     private struct Row {
         let id: UUID
@@ -30,8 +30,7 @@ struct FeedServiceDecodingTests {
 
     @Test("fetchPosts decodes real PostgREST/Storage response shapes correctly")
     func fetchPostsDecoding() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
+        let stub = TestSupabaseClient.make()
 
         // Pins the cursor's exact-text requirement: six fractional digits
         // that ISO8601DateFormatter would round up to `.910`, corrupting a
@@ -67,7 +66,7 @@ struct FeedServiceDecodingTests {
             )
         }
 
-        StubURLProtocol.setHandler { request in
+        stub.setHandler { request in
             guard let url = request.url else {
                 return .init(statusCode: 400, body: Data())
             }
@@ -82,7 +81,7 @@ struct FeedServiceDecodingTests {
             return .init(statusCode: 200, body: Self.rowsJSON(isPage2 ? page2Rows : page1Rows))
         }
 
-        let feedService = FeedService(client: TestSupabaseClient.make())
+        let feedService = FeedService(client: stub.client)
 
         let page1 = try await feedService.fetchPosts()
         #expect(page1.posts.count == 20)
@@ -115,22 +114,21 @@ struct FeedServiceDecodingTests {
         // in a URL query string means space, and would silently truncate the
         // cursor's timestamp.
         let paginatedRequest = try #require(
-            StubURLProtocol.requests.last { $0.url?.query?.contains("or=") == true }
+            stub.requests.last { $0.url?.query?.contains("or=") == true }
         )
         #expect(paginatedRequest.url?.absoluteString.contains("%2B") == true)
     }
 
     @Test("a PostgrestError body maps to FeedServiceError.other with the server's message")
     func postgrestErrorMapsThrough() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
+        let stub = TestSupabaseClient.make()
 
         let errorBody = Data(
             #"{"message":"permission denied for table posts","code":"42501"}"#.utf8
         )
-        StubURLProtocol.setHandler { _ in .init(statusCode: 400, body: errorBody) }
+        stub.setHandler { _ in .init(statusCode: 400, body: errorBody) }
 
-        let feedService = FeedService(client: TestSupabaseClient.make())
+        let feedService = FeedService(client: stub.client)
 
         do {
             _ = try await feedService.fetchPosts()
@@ -149,19 +147,18 @@ struct FeedServiceDecodingTests {
     /// decides which of the author's rows exist for the caller (SOL-37).
     @Test("fetchPosts(by:) adds an author filter and changes nothing else")
     func authorScope() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(body: Data("[]".utf8)) }
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in .init(body: Data("[]".utf8)) }
 
         let author = UUID()
         let cursor = FeedCursor(createdAt: "2026-09-04T14:04:30.909561+00:00", id: UUID())
-        let feedService = FeedService(client: TestSupabaseClient.make())
+        let feedService = FeedService(client: stub.client)
 
         let page = try await feedService.fetchPosts(by: author, before: cursor)
         #expect(page.posts.isEmpty)
         #expect(page.hasMore == false)
 
-        let scoped = try #require(StubURLProtocol.requests.last { $0.url?.path == "/rest/v1/posts" })
+        let scoped = try #require(stub.requests.last { $0.url?.path == "/rest/v1/posts" })
         let query = scoped.queryParameters
         #expect(query["user_id"] == "eq.\(author.uuidString)")
         #expect(query["limit"] == "\(FeedService.defaultLimit + 1)")
@@ -171,7 +168,7 @@ struct FeedServiceDecodingTests {
 
         // Without an author, the same query carries no user_id filter at all.
         _ = try await feedService.fetchPosts()
-        let unscoped = try #require(StubURLProtocol.requests.last { $0.url?.path == "/rest/v1/posts" })
+        let unscoped = try #require(stub.requests.last { $0.url?.path == "/rest/v1/posts" })
         #expect(unscoped.queryParameters["user_id"] == nil)
     }
 

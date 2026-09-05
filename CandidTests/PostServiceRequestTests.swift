@@ -14,8 +14,10 @@ import UIKit
 /// order the storage delete policy forces — and by `id` alone, since RLS
 /// scopes the delete to the author.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct PostServiceRequestTests {
     private static let me = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
@@ -34,22 +36,25 @@ struct PostServiceRequestTests {
         }
     }
 
+    private static func makeService() -> (PostService, TestSupabaseClient.StubbedClient) {
+        let stub = TestSupabaseClient.make()
+        return (PostService(client: stub.client, currentUserID: { Self.me }), stub)
+    }
+
     @Test("createPost uploads first, then inserts a row carrying the chosen visibility")
     func insertCarriesVisibility() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler(Self.happyPath)
+        let (service, stub) = Self.makeService()
+        stub.setHandler(Self.happyPath)
 
-        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
         try await service.createPost(image: Self.image(), caption: "  hello  ", visibility: .mutuals)
 
         // Upload before row, so a failed upload can never leave a row behind.
-        let paths = StubURLProtocol.requests.compactMap { $0.url?.path }
+        let paths = stub.requests.compactMap { $0.url?.path }
         let uploadIndex = try #require(paths.firstIndex { $0.hasPrefix(Self.uploadPrefix) })
         let insertIndex = try #require(paths.firstIndex { $0 == "/rest/v1/posts" })
         #expect(uploadIndex < insertIndex)
 
-        let insert = try #require(StubURLProtocol.requests.first { $0.url?.path == "/rest/v1/posts" })
+        let insert = try #require(stub.requests.first { $0.url?.path == "/rest/v1/posts" })
         #expect(insert.httpMethod == "POST")
 
         let row = try JSONDecoder().decode(InsertedRow.self, from: try #require(insert.drainedBody))
@@ -67,14 +72,12 @@ struct PostServiceRequestTests {
     /// rather than whatever the default happens to be on the day.
     @Test("visibility is followers when the caller does not choose, and is still sent")
     func defaultVisibility() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler(Self.happyPath)
+        let (service, stub) = Self.makeService()
+        stub.setHandler(Self.happyPath)
 
-        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
         try await service.createPost(image: Self.image(), caption: "   ")
 
-        let insert = try #require(StubURLProtocol.requests.first { $0.url?.path == "/rest/v1/posts" })
+        let insert = try #require(stub.requests.first { $0.url?.path == "/rest/v1/posts" })
         let row = try JSONDecoder().decode(InsertedRow.self, from: try #require(insert.drainedBody))
         #expect(row.visibility == .followers)
         // A blank caption is stored as NULL, not "".
@@ -87,16 +90,14 @@ struct PostServiceRequestTests {
     /// rows, so the client sends no `user_id` filter.
     @Test("deletePost removes the row by id alone, then the object")
     func deleteRowThenObject() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler(Self.deleteHappyPath)
+        let (service, stub) = Self.makeService()
+        stub.setHandler(Self.deleteHappyPath)
 
         let postID = UUID()
         let imagePath = "\(Self.me.uuidString.lowercased())/\(UUID().uuidString.lowercased()).jpg"
-        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
         try await service.deletePost(id: postID, imagePath: imagePath)
 
-        let requests = StubURLProtocol.requests
+        let requests = stub.requests
         #expect(requests.count == 2)
 
         let row = try #require(requests.first)
@@ -119,9 +120,8 @@ struct PostServiceRequestTests {
     /// failed object delete is logged, not reported as a failed delete.
     @Test("a failed object delete after the row is gone is not surfaced")
     func objectDeleteFailureIsNotAnError() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { request in
+        let (service, stub) = Self.makeService()
+        stub.setHandler { request in
             if request.url?.path == "/rest/v1/posts" {
                 return .init(statusCode: 204, body: Data())
             }
@@ -131,27 +131,24 @@ struct PostServiceRequestTests {
             )
         }
 
-        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
         try await service.deletePost(id: UUID(), imagePath: Self.ownImagePath())
-        #expect(StubURLProtocol.requests.count == 2)
+        #expect(stub.requests.count == 2)
     }
 
     /// A row that could not be deleted is a live post, and its object must
     /// stay exactly where it is.
     @Test("a refused row delete throws and never touches the object")
     func rowDeleteFailureStopsThere() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in
+        let (service, stub) = Self.makeService()
+        stub.setHandler { _ in
             .init(statusCode: 401, body: Data(#"{"code":"42501","message":"permission denied for table posts"}"#.utf8))
         }
 
-        let service = PostService(client: TestSupabaseClient.make(), currentUserID: { Self.me })
         await #expect(throws: PostError.self) {
             try await service.deletePost(id: UUID(), imagePath: Self.ownImagePath())
         }
-        #expect(StubURLProtocol.requests.count == 1)
-        #expect(StubURLProtocol.requests.first?.url?.path == "/rest/v1/posts")
+        #expect(stub.requests.count == 1)
+        #expect(stub.requests.first?.url?.path == "/rest/v1/posts")
     }
 
     // MARK: - Fixtures

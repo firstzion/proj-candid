@@ -8,8 +8,10 @@ import Supabase
 /// any account is asked for, and that a valid one travels in the sign-up
 /// metadata where the trigger reads it.
 ///
-/// `.serialized`: `StubURLProtocol`'s state is process-global.
-@Suite(.serialized)
+/// Each test builds its own `TestSupabaseClient`, which carries its own
+/// `StubURLProtocol` host (SOL-75), so tests are isolated without needing
+/// `.serialized`.
+@Suite
 struct AuthServiceSignUpTests {
     private static func signUp(_ service: AuthService, code: String) async throws -> SignUpResult {
         try await service.signUp(email: "new@example.com", password: "correct horse battery", username: "newcomer", inviteCode: code)
@@ -17,9 +19,8 @@ struct AuthServiceSignUpTests {
 
     @Test("a code that is not valid stops the sign-up with its own sentence, before any request but the status check")
     func stopsAtABadCode() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        let service = AuthService(client: TestSupabaseClient.make())
+        let stub = TestSupabaseClient.make()
+        let service = AuthService(client: stub.client)
 
         let cases: [(state: String, expected: SignUpError)] = [
             ("not_found", .inviteNotFound),
@@ -27,8 +28,8 @@ struct AuthServiceSignUpTests {
             ("expired", .inviteExpired),
         ]
         for (state, expected) in cases {
-            StubURLProtocol.reset()
-            StubURLProtocol.setHandler { request in
+            stub.reset()
+            stub.setHandler { request in
                 request.url?.path == "/rest/v1/rpc/invite_status"
                     ? .init(body: Data("\"\(state)\"".utf8))
                     : .init(statusCode: 500, body: Data())
@@ -40,8 +41,8 @@ struct AuthServiceSignUpTests {
                 #expect(error.errorDescription == expected.errorDescription, "state \(state)")
             }
             // Exactly one request, to the status function, with the normalised code.
-            #expect(StubURLProtocol.requests.count == 1)
-            let request = try #require(StubURLProtocol.requests.first)
+            #expect(stub.requests.count == 1)
+            let request = try #require(stub.requests.first)
             #expect(request.url?.path == "/rest/v1/rpc/invite_status")
             struct Params: Decodable { let p_code: String }
             let params = try JSONDecoder().decode(Params.self, from: try #require(request.drainedBody))
@@ -51,12 +52,11 @@ struct AuthServiceSignUpTests {
 
     @Test("a blank code is refused without any request")
     func blankCode() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { _ in .init(statusCode: 500, body: Data()) }
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { _ in .init(statusCode: 500, body: Data()) }
 
         do {
-            _ = try await Self.signUp(AuthService(client: TestSupabaseClient.make()), code: "   ")
+            _ = try await Self.signUp(AuthService(client: stub.client), code: "   ")
             Issue.record("expected .inviteMissing")
         } catch let error as SignUpError {
             guard case .inviteMissing = error else {
@@ -64,16 +64,15 @@ struct AuthServiceSignUpTests {
                 return
             }
         }
-        #expect(StubURLProtocol.requests.isEmpty)
+        #expect(stub.requests.isEmpty)
     }
 
     /// The trigger reads `invite_code` from the metadata; a sign-up that did
     /// not carry it would be refused for every code, valid or not.
     @Test("a valid code travels in the sign-up metadata, after the status and availability checks")
     func validCodeIsSent() async throws {
-        StubURLProtocol.reset()
-        defer { StubURLProtocol.reset() }
-        StubURLProtocol.setHandler { request in
+        let stub = TestSupabaseClient.make()
+        stub.setHandler { request in
             switch request.url?.path {
             case "/rest/v1/rpc/invite_status":
                 return .init(body: Data("\"valid\"".utf8))
@@ -92,12 +91,12 @@ struct AuthServiceSignUpTests {
             }
         }
 
-        _ = try? await Self.signUp(AuthService(client: TestSupabaseClient.make()), code: "candd-seed2")
+        _ = try? await Self.signUp(AuthService(client: stub.client), code: "candd-seed2")
 
-        let paths = StubURLProtocol.requests.compactMap { $0.url?.path }
+        let paths = stub.requests.compactMap { $0.url?.path }
         #expect(paths == ["/rest/v1/rpc/invite_status", "/rest/v1/rpc/username_available", "/auth/v1/signup"])
 
-        let signUp = try #require(StubURLProtocol.requests.last)
+        let signUp = try #require(stub.requests.last)
         struct Body: Decodable {
             struct Metadata: Decodable {
                 let username: String
