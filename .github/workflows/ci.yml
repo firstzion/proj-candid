@@ -23,6 +23,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Read the repo and nothing else. Artifact upload and the SPM cache use the
+# runner's own token, not this one. On a public repo a fork's pull request
+# already runs with a read-only token; saying it here keeps a future
+# `pull_request_target` or repository secret from widening it by accident.
+permissions:
+  contents: read
+
 jobs:
   test:
     # Hosted, not self-hosted: the repo is public, so GitHub's macOS minutes

@@ -561,17 +561,26 @@ update policy, since nothing on an edge can change.
 
 Row scoping alone left every column of a row you could reach writable, not
 just the ones the app sends: Supabase's default privileges grant `anon` and
-`authenticated` every table privilege on every table in `public`, and until
-SOL-68 nothing narrowed that further. A migration adds column-level grants on
-top: `authenticated` may update only `profiles.username` (not
-`invite_quota`, which the project owner raises by hand in the SQL editor);
-insert only `(user_id, image_path, caption, visibility)` on `posts`,
+`authenticated` every table privilege on every table and view in `public`,
+and RLS was the only thing narrowing them. Two migrations close that. SOL-68
+(`20260905023000`) took everything from `anon` and made the app's inserts
+and its one update column-level. `20260905170000` finishes the job for
+`authenticated`: every privilege is revoked and exactly what a policy uses is
+granted back — `select` where a read policy exists, `delete` on `posts`,
+`follows`, `blocks` and `invites`, `update` of `profiles.username` only (not
+`invite_quota`, which the project owner raises by hand in the SQL editor),
+and inserts of `(user_id, image_path, caption, visibility)` on `posts`,
 `(follower_id, followee_id)` on `follows`, `(blocker_id, blocked_id)` on
-`blocks`, and `(reporter_id, reported_profile_id, reported_post_id, reason,
-details)` on `reports` — every `id`, every `created_at`, and a report's own
-`status` are the server's alone. `anon` holds no table privilege at all now
-(RLS already denied it everything; the grants said so), and `mutuals` is
-`select`-only rather than carrying the same default DML grant as a table.
+`blocks` and `(reporter_id, reported_profile_id, reported_post_id, reason,
+details)` on `reports` — every `id`, every `created_at` and a report's own
+`status` are the server's alone. Nothing holds `truncate`, `trigger` or
+`references`, and the two views are `select`-only. The default privileges
+themselves are revoked for the role that runs migrations, for tables and for
+functions, so a new table or function starts closed and its migration has to
+say who may use it; the visibility matrix asserts the whole shape, so a
+forgotten grant fails CI rather than the app. Grants and policies are two
+locks, and a future policy without its grant does nothing — which is the
+point.
 
 `can_view_post()` is the one place the visibility rule lives. For a viewer
 looking at a post: the author always; otherwise only if the viewer follows the
@@ -619,7 +628,13 @@ own JWT is all it takes) and the feed would show that photo under their name.
 Post images live in the **private** `post-images` bucket (5 MB cap, `image/jpeg`
 only). Objects are laid out as `{user_id}/{uuid}.jpg`, and the insert policy
 requires the first path segment to equal the caller's `auth.uid()`, so nobody can
-write into another user's folder. A delete policy is scoped the same way, and
+write into another user's folder. The same policy caps an account at
+`private.post_image_cap()` objects — 1,000, a product number as much as a
+safety one, and one constant to change (`20260905171000`). The count comes
+from a `security definer` helper that reads `auth.uid()` itself, because a
+policy on `storage.objects` cannot query `storage.objects` — Postgres refuses
+the self-reference as recursive — and because the helper must count the
+whole folder, not what the caller's own select policy shows. A delete policy is scoped the same way, and
 further requires the object to be **unreferenced** — no `posts` row may still
 point at it, checked via a `security definer` `private.image_is_referenced()`
 helper (moved from `public` in SOL-69, so `anon` cannot call it as an RPC)

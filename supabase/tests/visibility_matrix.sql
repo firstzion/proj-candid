@@ -743,6 +743,39 @@ begin
         assert n = 2, format('case 26: both of carol''s reports about alice should survive with reported_profile_id null, has %s', n);
     end;
 
+    -- 28: per-account storage cap (20260905171000). The bucket bounds each
+    -- object at 5 MB and image/jpeg; this bounds how many. Runs as judy,
+    -- whose folder nothing else touches, inserting stand-in rows the way
+    -- case 8 does — storage-api inserts one row per upload as the caller
+    -- under RLS, which is exactly this. Reads the cap from the function, so
+    -- changing the number changes the test. About a thousand inserts; a
+    -- second or two.
+    perform pg_temp.act_as(judy);
+    select count(*) into n from storage.objects where name like judy::text || '/%';
+    assert n = 0, format('case 28 precondition: judy should hold no objects, holds %s', n);
+    for i in 1..private.post_image_cap() loop
+        insert into storage.objects (bucket_id, name, owner, owner_id)
+        values ('post-images', judy::text || '/' || gen_random_uuid()::text || '.jpg', judy, judy::text);
+    end loop;
+    -- The helper counts as its owner, and what lets that see the whole folder
+    -- is postgres having BYPASSRLS — it does not own storage.objects. Were
+    -- that ever untrue the count would read 0 and the cap would silently
+    -- never bind, so it is checked against what the loop inserted.
+    assert private.own_post_image_count() = private.post_image_cap(),
+        format('case 28: the cap helper counts %s objects, the loop inserted %s', private.own_post_image_count(), private.post_image_cap());
+    begin
+        insert into storage.objects (bucket_id, name, owner, owner_id)
+        values ('post-images', judy::text || '/' || gen_random_uuid()::text || '.jpg', judy, judy::text);
+        raise exception 'case 28: judy stored an object past the cap';
+    exception when insufficient_privilege then
+        get stacked diagnostics msg = message_text;
+        assert msg ilike '%row-level security%', format('case 28: unexpected refusal: %s', msg);
+    end;
+    -- The cap is per account: bob is unaffected by judy's folder being full.
+    perform pg_temp.act_as(bob);
+    insert into storage.objects (bucket_id, name, owner, owner_id)
+    values ('post-images', bob::text || '/' || gen_random_uuid()::text || '.jpg', bob, bob::text);
+
     -- Exposure: the rule is callable from policies, and from nowhere the API
     -- reaches.
     perform pg_temp.act_as_owner();
@@ -793,6 +826,16 @@ begin
         select 1 from pg_proc where proname = 'image_is_referenced' and pronamespace = 'public'::regnamespace
     ), 'exposure: image_is_referenced still has a copy in public';
 
+    -- 20260905171000: the storage cap's two helpers, private like every other
+    -- policy helper. The count reads auth.uid() itself, so even its caller
+    -- can only ever count their own folder.
+    assert not has_function_privilege('anon', 'private.own_post_image_count()', 'execute'),
+        'exposure: anon can execute own_post_image_count';
+    assert has_function_privilege('authenticated', 'private.own_post_image_count()', 'execute'),
+        'exposure: authenticated cannot execute own_post_image_count, so no upload can pass the policy';
+    assert not has_function_privilege('anon', 'private.post_image_cap()', 'execute'),
+        'exposure: anon can execute post_image_cap';
+
     -- SOL-68: the column-level grants that replaced "every column in your
     -- own row is writable". Case 27 demonstrates the same facts as refused
     -- writes rather than asserted privileges.
@@ -818,6 +861,60 @@ begin
         'structure: the old per-author index posts_user_id_created_at_idx should be gone';
     assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'profiles_username_pattern_idx'),
         'structure: profiles_username_pattern_idx is missing, so a prefix search is a scan';
+
+    -- Grant hygiene (20260905170000): authenticated holds no privilege a
+    -- policy does not use. Every app insert is column-level and the only
+    -- update is profiles.username, so neither appears here at table level
+    -- at all — information_schema.role_table_grants lists table-level
+    -- privileges only. A future table that keeps the defaults, or a future
+    -- policy added without its grant, fails here rather than in the app.
+    assert not exists (
+        select 1 from information_schema.role_table_grants
+        where table_schema = 'public' and grantee = 'anon'
+    ), 'exposure: anon holds a table-level grant in public';
+    assert not exists (
+        select 1 from information_schema.role_table_grants
+        where table_schema = 'public' and grantee = 'authenticated'
+          and privilege_type in ('TRUNCATE', 'TRIGGER', 'REFERENCES', 'INSERT', 'UPDATE')
+    ), 'exposure: authenticated holds a table-level TRUNCATE, TRIGGER, REFERENCES, INSERT or UPDATE in public';
+    assert not exists (
+        select 1 from information_schema.role_table_grants
+        where table_schema = 'public' and grantee = 'authenticated'
+          and privilege_type = 'DELETE'
+          and table_name not in ('posts', 'follows', 'blocks', 'invites')
+    ), 'exposure: authenticated can delete from a table the app never deletes from';
+    -- The defaults themselves, for the role that runs migrations: a table
+    -- created without an explicit grant must start closed.
+    assert not exists (
+        select 1
+        from pg_default_acl d
+        join pg_namespace n on n.oid = d.defaclnamespace
+        cross join lateral aclexplode(d.defaclacl) as a
+        where n.nspname = 'public' and d.defaclobjtype = 'r'
+          and d.defaclrole = 'postgres'::regrole
+          and a.grantee in ('anon'::regrole::oid, 'authenticated'::regrole::oid)
+    ), 'exposure: default privileges for postgres in public still grant anon or authenticated on new tables';
+    -- And for functions, including the implicit grant to PUBLIC (grantee 0):
+    -- a new function must be closed until its migration opens it.
+    assert not exists (
+        select 1
+        from pg_default_acl d
+        join pg_namespace n on n.oid = d.defaclnamespace
+        cross join lateral aclexplode(d.defaclacl) as a
+        where n.nspname = 'public' and d.defaclobjtype = 'f'
+          and d.defaclrole = 'postgres'::regrole
+          and a.grantee in (0, 'anon'::regrole::oid, 'authenticated'::regrole::oid)
+    ), 'exposure: default privileges for postgres in public still grant execute on new functions to public, anon or authenticated';
+
+    -- Views run as the caller, or RLS on their base tables would not apply:
+    -- a plain view runs as its owner, and the owner of every table here
+    -- bypasses RLS. Both existing views say security_invoker; any new one
+    -- must too.
+    assert not exists (
+        select 1 from pg_class c
+        where c.relkind = 'v' and c.relnamespace = 'public'::regnamespace
+          and not coalesce(c.reloptions, '{}') @> array['security_invoker=true']
+    ), 'structure: a view in public is not security_invoker and would bypass RLS on its base tables';
 end;
 $$;
 
