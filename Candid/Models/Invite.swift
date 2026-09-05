@@ -40,6 +40,15 @@ struct Invite: Identifiable, Decodable, Hashable {
         URL(string: "candid://invite/\(code)")!
     }
 
+    /// What the share sheet sends (SOL-63): the deep link for a phone that has
+    /// the app, and the code in plain text for one that doesn't — a
+    /// custom-scheme link is dead there, and invites will mostly be texted.
+    var shareMessage: String {
+        "Join me on Candid — it's invite-only. Your code is \(code). "
+            + "If you have the app, this link fills it in: \(deepLink.absoluteString). "
+            + "Otherwise enter the code when you sign up."
+    }
+
     enum CodingKeys: String, CodingKey {
         case code
         case inviterID = "inviter_id"

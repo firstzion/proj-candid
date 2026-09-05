@@ -3,8 +3,8 @@ import SwiftUI
 /// A person's profile — yours or anyone else's. One screen, switching on "is
 /// this me": the header, the three counts and the grid are the same for
 /// everyone; only the action row differs. Your own has the "Find people"
-/// lookup (until the People tab, SOL-39), Log Out and Delete Account, with
-/// Edit Username (SOL-41) and Invites (SOL-63) to come; anyone else's has
+/// lookup (until the People tab, SOL-39), Invites (SOL-63), Log Out and
+/// Delete Account, with Edit Username (SOL-41) to come; anyone else's has
 /// Follow/Unfollow and Block/Unblock, with Report (SOL-42) to come. Reached
 /// from the Profile tab, a username in the feed, the lookup, or a follower
 /// list.
@@ -209,6 +209,11 @@ struct ProfileScreen: View {
         if isSelf {
             VStack(alignment: .leading, spacing: 12) {
                 findPeople
+                NavigationLink {
+                    InvitesView()
+                } label: {
+                    Label("Invites", systemImage: "envelope")
+                }
                 Button("Log Out") { Task { await signOut() } }
                     .disabled(isSigningOut)
                 Button("Delete Account", role: .destructive) { isConfirmingDeleteAccount = true }

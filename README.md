@@ -32,7 +32,7 @@ real now: counts, a grid, and the follow lists where they may be read
 (SOL-37). And sign-up is invite-only (Milestone 9, SOL-60–62): a new account
 needs a code from someone already here, the trigger that creates its profile
 also redeems the code and makes the two friends, and nobody's first feed is
-empty.
+empty. You mint and share invites from your own profile (SOL-63).
 
 The Post tab creates a post end to end: pick from the photo library (or capture
 with the camera on a device that has one), preview it, add an optional caption,
@@ -199,7 +199,8 @@ Candid/
                       ImageDownsampler
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
-                      everyone else's), FollowListView, PostDetailView
+                      everyone else's), FollowListView, PostDetailView,
+                      InvitesView
     Components/       PostImageView, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
@@ -366,7 +367,12 @@ never-confirmed account spends its code and leaves the inviter following an
 inert account, which the invites screen shows and a later sweep can clean up.
 The seed creates its accounts without invites by setting
 `candid.allow_uninvited_signup` for its own session — a setting GoTrue has no
-way to set and no API-reachable function sets. `InviteService` is the client
+way to set and no API-reachable function sets. `InvitesView`, reached
+from your own profile, shows how many invites you have left ("3 of 5 invites
+left", or "You've used all 5 invites"), mints one, shares it through the system
+share sheet with the deep link and the code in plain text, and lets you swipe
+an unused code to revoke it; used codes show who redeemed them and when, or
+"someone" when that profile is hidden from you. `InviteService` is the client
 surface (`status`, `create`, `mine`, `revoke`, `quota`); `AuthService.signUp`
 checks the code first and sends it in the metadata; and `candid://invite/<code>`
 opens the sign-up form with the code filled in (`PendingInvite`).

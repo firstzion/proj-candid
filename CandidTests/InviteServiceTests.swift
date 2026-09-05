@@ -123,3 +123,38 @@ struct InviteServiceTests {
         }
     }
 }
+
+/// `Invite`'s own logic: which state a row is in, and what the share sheet
+/// sends. The message has to work on a phone without the app, so the code
+/// itself must be in it, not only the link.
+@Suite("Invite model")
+struct InviteModelTests {
+    private static func invite(redeemedAt: Date? = nil, expiresAt: Date? = nil) -> Invite {
+        Invite(
+            code: "ABCDE-FGHJK",
+            inviterID: UUID(),
+            redeemedBy: redeemedAt == nil ? nil : UUID(),
+            redeemedAt: redeemedAt,
+            createdAt: .now,
+            expiresAt: expiresAt,
+            redeemer: nil
+        )
+    }
+
+    @Test("the share message carries the code in plain text and the deep link")
+    func shareMessage() {
+        let message = Self.invite().shareMessage
+        #expect(message.contains("ABCDE-FGHJK"))
+        #expect(message.contains("candid://invite/ABCDE-FGHJK"))
+    }
+
+    @Test("redeemed beats expired, expired beats open, and no expiry never expires")
+    func state() {
+        let past = Date.now.addingTimeInterval(-3600)
+        let future = Date.now.addingTimeInterval(3600)
+        #expect(Self.invite(expiresAt: future).state() == .unredeemed)
+        #expect(Self.invite(expiresAt: nil).state() == .unredeemed)
+        #expect(Self.invite(expiresAt: past).state() == .expired)
+        #expect(Self.invite(redeemedAt: past, expiresAt: past).state() == .redeemed)
+    }
+}
