@@ -172,16 +172,19 @@ insert into public.likes (post_id, user_id)
 select p.id, '00000000-0000-0000-0000-000000000009'                       -- ivan: post 1 only
 from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.caption like 'Seed post 1 %';
 
+-- The uuid literals below are cast explicitly. Under UNION a bare literal is
+-- resolved to text before the INSERT sees it, and text has no cast to uuid;
+-- the single-select inserts above are coerced to the column type as-is.
 insert into public.comments (id, post_id, user_id, body, created_at)
-select 'c0000000-0000-0000-0000-000000000001', p.id, '00000000-0000-0000-0000-000000000003',
+select 'c0000000-0000-0000-0000-000000000001'::uuid, p.id, '00000000-0000-0000-0000-000000000003'::uuid,
        'Love this one', least(p.created_at + interval '1 hour', now())    -- carol, on post 1
 from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.caption like 'Seed post 1 %'
 union all
-select 'c0000000-0000-0000-0000-000000000002', p.id, '00000000-0000-0000-0000-000000000001',
+select 'c0000000-0000-0000-0000-000000000002'::uuid, p.id, '00000000-0000-0000-0000-000000000001'::uuid,
        'Thanks!', least(p.created_at + interval '2 hours', now())         -- alice, on her own post 1
 from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.caption like 'Seed post 1 %'
 union all
-select 'c0000000-0000-0000-0000-000000000003', p.id, '00000000-0000-0000-0000-000000000002',
+select 'c0000000-0000-0000-0000-000000000003'::uuid, p.id, '00000000-0000-0000-0000-000000000002'::uuid,
        'Friends-only gem', least(p.created_at + interval '1 hour', now()) -- bob, on the mutuals post
 from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.visibility = 'mutuals';
 
