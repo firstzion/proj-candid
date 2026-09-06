@@ -29,7 +29,9 @@
 --   dave blocks erin, with no follows between them; judy unconnected;
 --   each account's post 3 is 'mutuals', posts 1 and 2 are 'followers';
 --   alice holds three invites — CANDD-SEED2 valid, CANDD-SEED3 redeemed by
---   bob, CANDD-SEED4 expired — against a quota of 5.
+--   bob, CANDD-SEED4 expired — against a quota of 5;
+--   six likes, three comments (fixed ids c0000000-…-01/02/03) and three
+--   comment likes on alice's posts — the seed's Likes and comments block.
 --
 -- Case numbers follow SOL-30's test pass, plus SOL-28's "unfollowing one side
 -- removes the pair" (10), the profile and re-follow rules from SOL-31
@@ -50,6 +52,10 @@
 -- nonexistent post the same way as a hidden one). Since SOL-68, column
 -- grants (27): the quota, feed order and a report's own status are all
 -- server-only now, while an ordinary write within your own row still works.
+-- Since SOL-88, likes and comments (29-33): readable and writable with their
+-- post and nowhere else, hidden across a block in both directions, deletable
+-- by their writer or the post's author, counted by computed columns under the
+-- caller's own RLS — and cascading with the post (17) and the account (26).
 
 begin;
 
@@ -118,10 +124,22 @@ declare
     erin  constant uuid := '00000000-0000-0000-0000-000000000005';
     ivan  constant uuid := '00000000-0000-0000-0000-000000000009';
     judy  constant uuid := '00000000-0000-0000-0000-00000000000a';
+    frank constant uuid := '00000000-0000-0000-0000-000000000006';
+    -- The seeded comments (SOL-88): carol's on alice's post 1, alice's reply
+    -- on it, and bob's on alice's mutuals post.
+    c_carol constant uuid := 'c0000000-0000-0000-0000-000000000001';
+    c_alice constant uuid := 'c0000000-0000-0000-0000-000000000002';
+    c_bob   constant uuid := 'c0000000-0000-0000-0000-000000000003';
     n int;
     m int;
+    b boolean;
     msg text;
     alice_mutuals_path text;
+    alice_post1 uuid;
+    alice_post2 uuid;
+    alice_mutuals_post uuid;
+    frank_post1 uuid;
+    c_temp uuid;
 begin
     -- Preconditions: the seed is loaded in the shape the cases assume.
     select count(*) into n from public.posts where user_id = alice and visibility = 'mutuals';
@@ -146,6 +164,16 @@ begin
     assert n = 3, format('precondition: alice should hold 3 seeded invites, holds %s — re-run the seed after the invites migration', n);
     assert (select invite_quota from public.profiles where id = alice) = 5, 'precondition: alice''s invite quota should be 5';
     select image_path into alice_mutuals_path from public.posts where user_id = alice and visibility = 'mutuals';
+    select id into alice_post1 from public.posts where user_id = alice and caption like 'Seed post 1 %';
+    select id into alice_post2 from public.posts where user_id = alice and caption like 'Seed post 2 %';
+    select id into alice_mutuals_post from public.posts where user_id = alice and visibility = 'mutuals';
+    select id into frank_post1 from public.posts where user_id = frank and caption like 'Seed post 1 %';
+    select count(*) into n from public.likes l join public.posts p on p.id = l.post_id where p.user_id = alice;
+    assert n = 6, format('precondition: alice''s posts should carry 6 seeded likes, carry %s — re-run the seed after the likes migration', n);
+    select count(*) into n from public.comments c join public.posts p on p.id = c.post_id where p.user_id = alice;
+    assert n = 3, format('precondition: alice''s posts should carry 3 seeded comments, carry %s', n);
+    select count(*) into n from public.comment_likes where comment_id in (c_carol, c_alice, c_bob);
+    assert n = 3, format('precondition: the seeded comments should carry 3 likes, carry %s', n);
 
     -- 1, 2: the author sees their own posts at both tiers.
     perform pg_temp.act_as(alice);
@@ -303,6 +331,212 @@ begin
     perform pg_temp.act_as(judy);
     select count(*) into n from public.posts where user_id = alice;
     assert n = 0, format('case 18: judy''s count of alice''s posts should be 0, is %s', n);
+
+    -- 29: likes and comments read with their post (SOL-88). A one-way follower
+    -- sees what sits on the followers posts and nothing on the mutuals post;
+    -- a mutual sees all of it; a stranger sees none of it; and the computed
+    -- columns agree with the tables from every seat, including the author's.
+    perform pg_temp.act_as(carol);
+    select count(*) into n from public.likes where post_id = alice_post1;
+    assert n = 3, format('case 29: carol should see 3 likes on alice''s post 1 (bob, carol, ivan), sees %s', n);
+    select count(*) into n from public.comments where post_id = alice_post1;
+    assert n = 2, format('case 29: carol should see 2 comments on post 1, sees %s', n);
+    select public.post_like_count(p), public.post_comment_count(p), public.post_liked_by_viewer(p) into n, m, b
+    from public.posts p where p.id = alice_post1;
+    assert n = 3 and m = 2 and b, format('case 29: carol''s computed columns for post 1 should be 3 / 2 / true, are %s / %s / %s', n, m, b);
+    select count(*) into n from public.likes where post_id = alice_mutuals_post;
+    assert n = 0, format('case 29: carol must see no likes on the mutuals post, sees %s', n);
+    select count(*) into n from public.comments where post_id = alice_mutuals_post;
+    assert n = 0, format('case 29: carol must see no comments on the mutuals post, sees %s', n);
+    select public.comment_like_count(c), public.comment_liked_by_viewer(c) into n, b from public.comments c where c.id = c_carol;
+    assert n = 2 and not b, format('case 29: carol''s own comment should show 2 likes, not hers, shows %s / %s', n, b);
+    select public.comment_liked_by_viewer(c) into b from public.comments c where c.id = c_alice;
+    assert b, 'case 29: carol should see her own like on alice''s reply';
+    perform pg_temp.act_as(ivan);
+    select public.post_liked_by_viewer(p) into b from public.posts p where p.id = alice_post1;
+    assert b, 'case 29: ivan should see his own like on post 1';
+    perform pg_temp.act_as(bob);
+    select public.post_like_count(p), public.post_comment_count(p), public.post_liked_by_viewer(p) into n, m, b
+    from public.posts p where p.id = alice_mutuals_post;
+    assert n = 1 and m = 1 and b, format('case 29: bob''s columns for the mutuals post should be 1 / 1 / true, are %s / %s / %s', n, m, b);
+    perform pg_temp.act_as(judy);
+    select count(*) into n from public.likes;
+    assert n = 0, format('case 29: judy (stranger) sees %s likes', n);
+    select count(*) into n from public.comments;
+    assert n = 0, format('case 29: judy sees %s comments', n);
+    select count(*) into n from public.comment_likes;
+    assert n = 0, format('case 29: judy sees %s comment likes', n);
+    -- The computed column called RPC-style with a fabricated row: RLS still
+    -- answers zero for a post the caller cannot see, so the endpoint is not
+    -- an oracle for hidden posts.
+    select public.post_like_count(row(alice_post1, alice, 'x'::text, null::text, now(), 'followers'::public.post_visibility)::public.posts) into n;
+    assert n = 0, format('case 29: judy''s RPC-style count of a hidden post should be 0, is %s', n);
+    perform pg_temp.act_as(alice);
+    select public.post_like_count(p), public.post_comment_count(p), public.post_liked_by_viewer(p) into n, m, b
+    from public.posts p where p.id = alice_post1;
+    assert n = 3 and m = 2 and not b, format('case 29: alice''s columns for her post 1 should be 3 / 2 / false, are %s / %s / %s', n, m, b);
+
+    -- 30: writes refused — a hidden post, someone else's name, a duplicate,
+    -- a blank or oversized body, a server-owned column, an edit.
+    perform pg_temp.act_as(carol);
+    begin
+        insert into public.likes (post_id, user_id) values (alice_mutuals_post, carol);
+        raise exception 'case 30: carol liked a post she cannot see';
+    exception when insufficient_privilege then
+        null;
+    end;
+    begin
+        insert into public.likes (post_id, user_id) values (alice_post2, bob);
+        raise exception 'case 30: carol liked as bob';
+    exception when insufficient_privilege then
+        null;
+    end;
+    begin
+        insert into public.likes (post_id, user_id) values (alice_post1, carol);
+        raise exception 'case 30: a duplicate like was accepted';
+    exception when unique_violation then
+        null;
+    end;
+    begin
+        insert into public.comments (post_id, user_id, body) values (alice_mutuals_post, carol, 'x');
+        raise exception 'case 30: carol commented on a post she cannot see';
+    exception when insufficient_privilege then
+        null;
+    end;
+    begin
+        insert into public.comments (post_id, user_id, body) values (alice_post1, carol, '   ');
+        raise exception 'case 30: a blank comment was accepted';
+    exception when check_violation then
+        null;
+    end;
+    begin
+        insert into public.comments (post_id, user_id, body) values (alice_post1, carol, repeat('x', 1001));
+        raise exception 'case 30: a 1001-character comment was accepted';
+    exception when check_violation then
+        null;
+    end;
+    begin
+        insert into public.comments (post_id, user_id, body, created_at) values (alice_post1, carol, 'x', now());
+        raise exception 'case 30: comments.created_at is client-settable';
+    exception when insufficient_privilege then
+        null;
+    end;
+    begin
+        insert into public.comment_likes (comment_id, user_id) values (c_bob, carol);
+        raise exception 'case 30: carol liked a comment on a post she cannot see';
+    exception when insufficient_privilege then
+        null;
+    end;
+    begin
+        update public.comments set body = 'edited' where id = c_carol;
+        raise exception 'case 30: a comment was edited';
+    exception when insufficient_privilege then
+        null;
+    end;
+    perform pg_temp.act_as(judy);
+    begin
+        insert into public.likes (post_id, user_id) values (alice_post1, judy);
+        raise exception 'case 30: judy liked a stranger''s post';
+    exception when insufficient_privilege then
+        null;
+    end;
+
+    -- 31: deletes — your own; the author's, on their post; nobody else's. Uses
+    -- fresh rows on alice's post 2 so the seeded thread on post 1 stays as
+    -- later cases expect it.
+    perform pg_temp.act_as(carol);
+    delete from public.likes where post_id = alice_post2 and user_id = bob;
+    get diagnostics n = row_count;
+    assert n = 0, format('case 31: carol removed bob''s like (%s)', n);
+    delete from public.comments where id = c_alice;
+    get diagnostics n = row_count;
+    assert n = 0, format('case 31: carol deleted alice''s comment (%s)', n);
+    insert into public.comments (post_id, user_id, body) values (alice_post2, carol, 'temporary') returning id into c_temp;
+    perform pg_temp.act_as(bob);
+    delete from public.comments where id = c_temp;
+    get diagnostics n = row_count;
+    assert n = 0, format('case 31: bob, neither author nor commenter, deleted carol''s comment (%s)', n);
+    insert into public.comment_likes (comment_id, user_id) values (c_temp, bob);
+    perform pg_temp.act_as(carol);
+    delete from public.comments where id = c_temp;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 31: carol should delete her own comment, deleted %s', n);
+    perform pg_temp.act_as_owner();
+    select count(*) into n from public.comment_likes where comment_id = c_temp;
+    assert n = 0, format('case 31: the deleted comment''s like should cascade, %s left', n);
+    perform pg_temp.act_as(carol);
+    insert into public.comments (post_id, user_id, body) values (alice_post2, carol, 'temporary again') returning id into c_temp;
+    perform pg_temp.act_as(alice);
+    delete from public.comments where id = c_temp;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 31: alice should delete a comment on her own post, deleted %s', n);
+    perform pg_temp.act_as(carol);
+    delete from public.likes where post_id = alice_post2 and user_id = carol;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 31: carol should remove her own like, removed %s', n);
+    delete from public.likes where post_id = alice_post2 and user_id = carol;
+    get diagnostics n = row_count;
+    assert n = 0, 'case 31: a second unlike should match nothing and raise nothing';
+
+    -- 32: comment likes resolve through the comment, and the comment through
+    -- the post. bob can like alice's reply on post 1 (carol's seeded like is
+    -- already on it) and take it back; bob's own comment on the mutuals post
+    -- is out of carol's reach.
+    perform pg_temp.act_as(bob);
+    insert into public.comment_likes (comment_id, user_id) values (c_alice, bob);
+    get diagnostics n = row_count;
+    assert n = 1, 'case 32: bob should like a comment he can see';
+    select public.comment_like_count(c), public.comment_liked_by_viewer(c) into n, b from public.comments c where c.id = c_alice;
+    assert n = 2 and b, format('case 32: alice''s reply should show 2 likes (carol''s and bob''s), his among them, shows %s / %s', n, b);
+    delete from public.comment_likes where comment_id = c_alice and user_id = bob;
+    get diagnostics n = row_count;
+    assert n = 1, format('case 32: bob should remove his comment like, removed %s', n);
+    select public.comment_like_count(c) into n from public.comments c where c.id = c_alice;
+    assert n = 1, format('case 32: the reply should be back to carol''s 1 like, shows %s', n);
+    perform pg_temp.act_as(carol);
+    begin
+        insert into public.comment_likes (comment_id, user_id) values (c_bob, carol);
+        raise exception 'case 32: carol liked a comment on a post she cannot see';
+    exception when insufficient_privilege then
+        null;
+    end;
+    perform pg_temp.act_as(judy);
+    select public.comment_like_count(row(c_carol, alice_post1, carol, 'x'::text, now())::public.comments) into n;
+    assert n = 0, format('case 32: judy''s RPC-style count of a hidden comment should be 0, is %s', n);
+
+    -- 33: a block hides the pair's likes and comments from each other on a
+    -- third party's post, in both directions, and from nobody else. dave
+    -- blocks erin and follows frank; erin is given a follow of frank for the
+    -- case and both react to frank's post 1.
+    perform pg_temp.act_as_owner();
+    insert into public.follows (follower_id, followee_id) values (erin, frank);
+    perform pg_temp.act_as(erin);
+    insert into public.comments (post_id, user_id, body) values (frank_post1, erin, 'from erin') returning id into c_temp;
+    insert into public.likes (post_id, user_id) values (frank_post1, erin);
+    perform pg_temp.act_as(dave);
+    insert into public.likes (post_id, user_id) values (frank_post1, dave);
+    select count(*) into n from public.comments where post_id = frank_post1;
+    assert n = 0, format('case 33: dave (blocker) must not see erin''s comment, sees %s', n);
+    select public.post_like_count(p), public.post_comment_count(p) into n, m from public.posts p where p.id = frank_post1;
+    assert n = 1 and m = 0, format('case 33: dave''s counts should leave erin out (1 / 0), are %s / %s', n, m);
+    begin
+        insert into public.comment_likes (comment_id, user_id) values (c_temp, dave);
+        raise exception 'case 33: dave liked a comment by someone he blocked';
+    exception when insufficient_privilege then
+        null;
+    end;
+    perform pg_temp.act_as(erin);
+    select count(*) into n from public.likes where post_id = frank_post1 and user_id = dave;
+    assert n = 0, format('case 33: erin (blocked) must not see dave''s like, sees %s', n);
+    select public.post_like_count(p) into n from public.posts p where p.id = frank_post1;
+    assert n = 1, format('case 33: erin''s like count should leave dave out (1), is %s', n);
+    perform pg_temp.act_as(frank);
+    select public.post_like_count(p), public.post_comment_count(p) into n, m from public.posts p where p.id = frank_post1;
+    assert n = 2 and m = 1, format('case 33: the author should count both (2 / 1), counts %s / %s', n, m);
+    perform pg_temp.act_as_owner();
+    delete from public.comments where id = c_temp;
+    delete from public.likes where post_id = frank_post1;
+    delete from public.follows where follower_id = erin and followee_id = frank;
 
     -- 19: what the world may learn about a code is one enum value (SOL-60).
     -- anon can call invite_status() and nothing else: the table answers no
@@ -587,6 +821,14 @@ begin
     delete from public.posts where user_id = alice and visibility = 'mutuals';
     get diagnostics n = row_count;
     assert n = 1, format('case 17: alice should delete her own post, deleted %s', n);
+    -- SOL-88: the post's likes and comments went with it — bob's seeded like
+    -- and his comment on the mutuals post.
+    perform pg_temp.act_as_owner();
+    select count(*) into n from public.likes where post_id = alice_mutuals_post;
+    assert n = 0, format('case 17: the deleted post''s likes should cascade, %s left', n);
+    select count(*) into n from public.comments where post_id = alice_mutuals_post;
+    assert n = 0, format('case 17: the deleted post''s comments should cascade, %s left', n);
+    perform pg_temp.act_as(alice);
     delete from storage.objects where name = alice_mutuals_path;
     get diagnostics n = row_count;
     assert n = 1, format('case 17: with the row gone alice should delete the object, deleted %s', n);
@@ -751,6 +993,11 @@ begin
         select count(*) into n from public.reports
         where reporter_id = carol and reported_profile_id is null;
         assert n = 2, format('case 26: both of carol''s reports about alice should survive with reported_profile_id null, has %s', n);
+        -- SOL-88: the account's own likes and comments went with it.
+        select count(*) into n from public.likes where user_id = alice;
+        assert n = 0, format('case 26: alice''s likes should cascade with her account, %s left', n);
+        select count(*) into n from public.comments where user_id = alice;
+        assert n = 0, format('case 26: alice''s comments should cascade with her account, %s left', n);
     end;
 
     -- 28: per-account storage cap (20260905171000). The bucket bounds each
@@ -846,6 +1093,44 @@ begin
     assert not has_function_privilege('anon', 'private.post_image_cap()', 'execute'),
         'exposure: anon can execute post_image_cap';
 
+    -- SOL-88: the comment helper stays in private; the five computed columns
+    -- are callable by authenticated in public, because a select on posts or
+    -- comments has to be able to evaluate them.
+    assert not has_function_privilege('anon', 'private.can_view_comment(uuid,uuid)', 'execute'),
+        'exposure: anon can execute can_view_comment';
+    assert has_function_privilege('authenticated', 'private.can_view_comment(uuid,uuid)', 'execute'),
+        'exposure: authenticated cannot execute can_view_comment';
+    assert not has_function_privilege('anon', 'public.post_like_count(public.posts)', 'execute'),
+        'exposure: anon can execute post_like_count';
+    assert has_function_privilege('authenticated', 'public.post_like_count(public.posts)', 'execute'),
+        'exposure: authenticated cannot execute post_like_count, so the feed select fails';
+    assert has_function_privilege('authenticated', 'public.post_comment_count(public.posts)', 'execute'),
+        'exposure: authenticated cannot execute post_comment_count';
+    assert has_function_privilege('authenticated', 'public.post_liked_by_viewer(public.posts)', 'execute'),
+        'exposure: authenticated cannot execute post_liked_by_viewer';
+    assert has_function_privilege('authenticated', 'public.comment_like_count(public.comments)', 'execute'),
+        'exposure: authenticated cannot execute comment_like_count';
+    assert has_function_privilege('authenticated', 'public.comment_liked_by_viewer(public.comments)', 'execute'),
+        'exposure: authenticated cannot execute comment_liked_by_viewer';
+    assert not has_function_privilege('anon', 'public.comment_like_count(public.comments)', 'execute'),
+        'exposure: anon can execute comment_like_count';
+    assert not has_column_privilege('authenticated', 'public.likes', 'created_at', 'INSERT'),
+        'exposure: authenticated can insert likes.created_at';
+    assert not has_column_privilege('authenticated', 'public.comments', 'id', 'INSERT'),
+        'exposure: authenticated can insert comments.id';
+    assert not has_column_privilege('authenticated', 'public.comments', 'created_at', 'INSERT'),
+        'exposure: authenticated can insert comments.created_at';
+    assert has_column_privilege('authenticated', 'public.comments', 'body', 'INSERT'),
+        'exposure: authenticated lost insert on comments.body';
+    assert not has_column_privilege('authenticated', 'public.comment_likes', 'created_at', 'INSERT'),
+        'exposure: authenticated can insert comment_likes.created_at';
+    assert not has_table_privilege('authenticated', 'public.comments', 'UPDATE'),
+        'exposure: comments are updatable';
+    assert not exists (
+        select 1 from pg_policies
+        where schemaname = 'public' and tablename in ('likes', 'comments', 'comment_likes') and cmd = 'UPDATE'
+    ), 'structure: likes, comments and comment_likes must have no update policy';
+
     -- SOL-68: the column-level grants that replaced "every column in your
     -- own row is writable". Case 27 demonstrates the same facts as refused
     -- writes rather than asserted privileges.
@@ -871,6 +1156,13 @@ begin
         'structure: the old per-author index posts_user_id_created_at_idx should be gone';
     assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'profiles_username_pattern_idx'),
         'structure: profiles_username_pattern_idx is missing, so a prefix search is a scan';
+    -- SOL-88: the thread's order, and the cascades from profiles.
+    assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'comments_post_id_created_at_id_idx'),
+        'structure: comments_post_id_created_at_id_idx is missing, so a thread is a sort';
+    assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'likes_user_id_idx'),
+        'structure: likes_user_id_idx is missing';
+    assert exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'comment_likes_user_id_idx'),
+        'structure: comment_likes_user_id_idx is missing';
 
     -- Grant hygiene (20260905170000): authenticated holds no privilege a
     -- policy does not use. Every app insert is column-level and the only
@@ -891,7 +1183,7 @@ begin
         select 1 from information_schema.role_table_grants
         where table_schema = 'public' and grantee = 'authenticated'
           and privilege_type = 'DELETE'
-          and table_name not in ('posts', 'follows', 'blocks', 'invites')
+          and table_name not in ('posts', 'follows', 'blocks', 'invites', 'likes', 'comments', 'comment_likes')
     ), 'exposure: authenticated can delete from a table the app never deletes from';
     -- The defaults themselves, for the role that runs migrations: a table
     -- created without an explicit grant must start closed.

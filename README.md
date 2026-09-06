@@ -206,7 +206,11 @@ for a cooling-down name, and an old handle resolving to the current profile
 except for someone the owner has blocked; search, whose view omits you, your
 blocks and your blockers; and reports — insert-only, only what the reporter
 could see, a repeat refused, one about nothing refused, unreadable to
-everyone, surviving the post's deletion and the reported account's.
+everyone, surviving the post's deletion and the reported account's; and,
+since SOL-88, likes and comments — readable and writable with their post,
+hidden across a block, deletable by their writer or the post's author,
+cascading with the post and the account, and counted by computed columns
+under the caller's own RLS.
 Everything it touches is rolled back. CI (`.github/workflows/ci.yml`,
 `schema` job) runs it on every push to `main`, against migrations and seed data applied
 fresh to a throwaway database via `supabase start` and `supabase db reset` —
@@ -336,6 +340,9 @@ build settings for keys it already knows about, and silently drops unknown ones.
 | `invites` | `code` (PK), `inviter_id` (→ `profiles`, cascade), `redeemed_by` (→ `profiles`, set null), `redeemed_at`, `created_at`, `expires_at` |
 | `username_history` | `profile_id` (→ `profiles`, cascade), `username`, `changed_at`; PK (`profile_id`, `changed_at`) |
 | `reports` | `id` (PK), `reporter_id` (→ `profiles`, cascade), `reported_profile_id` (→ `profiles`, set null), `reported_post_id` (→ `posts`, set null), `about_post`, `reason` (enum), `details` (≤ 500), `status` (`open` \| `reviewed` \| `actioned`), `created_at`; CHECK `reporter_id <> reported_profile_id` |
+| `likes` | `post_id` (→ `posts`, cascade), `user_id` (→ `profiles`, cascade), `created_at`; PK (`post_id`, `user_id`) |
+| `comments` | `id` (PK), `post_id` (→ `posts`, cascade), `user_id` (→ `profiles`, cascade), `body` (1–1,000 characters, not blank), `created_at` |
+| `comment_likes` | `comment_id` (→ `comments`, cascade), `user_id` (→ `profiles`, cascade), `created_at`; PK (`comment_id`, `user_id`) |
 
 A trigger on `auth.users` (`handle_new_user`) runs inside GoTrue's insert at
 sign-up. Since Milestone 9 it is the whole onboarding transaction: it requires
@@ -516,6 +523,32 @@ treats as success. Reporting is silent to the reported account, and the sheet
 offers a block right after, since the reporter usually wants the content gone
 from their own view now.
 
+`likes`, `comments` and `comment_likes` (SOL-88) hang off posts and inherit
+the post's rule rather than restating it: a like or a comment is readable and
+writable exactly when its post is, because every one of their policies calls
+`can_view_post()`. One thing the post rule cannot say is added on top — across
+a block, in either direction, the pair's likes and comments are hidden from
+each other on anyone's post, so a block hides content both ways here as well;
+nothing is deleted by it, and unblocking restores the view. A like is binary
+by construction: the composite primary key refuses a second one, which the
+client treats as success, the way a duplicate follow is. Comments are flat
+(no reply threading) and immutable like posts — there is no update policy and
+no update grant — with a body of 1 to 1,000 characters that is not blank.
+Delete is your own like or comment anywhere, and, for comments, anything on
+your own post, so an author moderates their own thread. Every foreign key
+cascades: a deleted post takes its likes and comments (and their likes) with
+it, and `delete_own_account()` takes everything the account wrote. The
+numbers a card shows come from five *computed columns* — `post_like_count`,
+`post_comment_count` and `post_liked_by_viewer` on `posts`,
+`comment_like_count` and `comment_liked_by_viewer` on `comments` — functions
+of the row type that PostgREST exposes as virtual columns selectable by name
+and never included in `*`, so the feed adds three names to its one select and
+stays one request. They run as the caller under RLS, which makes each count
+"the likes you can see", the same principle as the profile's post count; a
+blocked pair's likes are left out of each other's numbers. The helper that
+resolves a comment like to its post, `private.can_view_comment()`, lives in
+`private` with the rest.
+
 Empty states (SOL-40) live in one place, `EmptyState`, with `EmptyStateView`
 drawing them. The feed tells its two empties apart with
 `FollowService.followingCount()`: following nobody — what you see after
@@ -541,7 +574,7 @@ the sanitised database error is now reported as a failed creation whose username
 *may* have been taken, rather than asserted as taken — that assertion used to
 turn every server-side failure into a report of a user mistake.
 
-RLS is enabled on all seven tables, and the read policies are where the
+RLS is enabled on all ten tables, and the read policies are where the
 product's premise lives. A `posts` row is readable only when
 `private.can_view_post(viewer, author, visibility)` says so — see below. A
 `profiles` row is readable unless its owner has blocked you; the person who
@@ -580,13 +613,16 @@ and RLS was the only thing narrowing them. Two migrations close that. SOL-68
 and its one update column-level. `20260905170000` finishes the job for
 `authenticated`: every privilege is revoked and exactly what a policy uses is
 granted back — `select` where a read policy exists, `delete` on `posts`,
-`follows`, `blocks` and `invites`, `update` of `profiles.username` only (not
+`follows`, `blocks`, `invites` and — since SOL-88 — `likes`, `comments` and
+`comment_likes`, `update` of `profiles.username` only (not
 `invite_quota`, which the project owner raises by hand in the SQL editor),
 and inserts of `(user_id, image_path, caption, visibility)` on `posts`,
 `(follower_id, followee_id)` on `follows`, `(blocker_id, blocked_id)` on
-`blocks` and `(reporter_id, reported_profile_id, reported_post_id, reason,
-details)` on `reports` — every `id`, every `created_at` and a report's own
-`status` are the server's alone. Nothing holds `truncate`, `trigger` or
+`blocks`, `(reporter_id, reported_profile_id, reported_post_id, reason,
+details)` on `reports`, `(post_id, user_id)` on `likes`, `(post_id, user_id,
+body)` on `comments` and `(comment_id, user_id)` on `comment_likes` — every
+`id`, every `created_at` and a report's own `status` are the server's alone.
+Nothing holds `truncate`, `trigger` or
 `references`, and the two views are `select`-only. The default privileges
 themselves are revoked for the role that runs migrations, for tables and for
 functions, so a new table or function starts closed and its migration has to
@@ -609,9 +645,10 @@ applies the same rule. All three are `security definer` (the rule has to read
 Nothing in Swift decides whether a post is visible: `FeedService.fetchPosts`
 selects with no visibility filter at all, and because RLS filters rows before
 `limit` applies, a page is full whenever more rows exist and the keyset cursor
-works exactly as before. Likes, comments, profile grids and moderation should
-call the same function rather than restate it — a second copy of the rule is
-how a photo leaks. `profiles` narrowed in the same migration as `posts`,
+works exactly as before. Likes and comments (SOL-88) and the profile grid do
+call the same function; moderation should too, rather than restate it — a
+second copy of the rule is how a photo leaks. `profiles` narrowed in the same
+migration as `posts`,
 deliberately: a post is only ever visible together with its author's profile
 row, and narrowing one without the other would leave a feed page embedding a
 hidden author and failing to decode.
@@ -839,6 +876,13 @@ the sign-up trigger requires an invite, the seed first sets
 `CANDD-SEED2` (valid — sign a new account up with it), `CANDD-SEED3` (redeemed
 by bob) and `CANDD-SEED4` (expired). Re-seeding recreates alice, which drops
 those rows and any follow edges a real account made with her.
+
+Likes and comments are seeded too (SOL-88): bob likes all three of alice's
+posts, carol her two followers posts and ivan her first; carol comments on
+alice's first post and alice replies, and bob comments on her friends-only
+post; alice and bob like carol's comment and carol likes alice's reply — the
+shapes cases 29–33 of the matrix check from every seat, and enough for the
+likes and comments walk to have numbers on screen.
 
 ## Conventions
 

@@ -154,6 +154,43 @@ insert into public.blocks (blocker_id, blocked_id) values
     ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005'); -- dave blocks erin
 
 -- -----------------------------------------------------------------------
+-- Likes and comments (SOL-88)
+-- -----------------------------------------------------------------------
+-- Enough for the matrix's cases 29–33 and for the SOL-92 walk to have
+-- numbers on screen. Each row is one the policies would have allowed: bob
+-- is alice's mutual and sees all three of her posts; carol and ivan follow
+-- her one-way and see the two followers posts. Comments are timestamped
+-- after their post, clamped to now, so the thread reads in order; the
+-- fixed ids let the matrix name them.
+insert into public.likes (post_id, user_id)
+select p.id, '00000000-0000-0000-0000-000000000002'                       -- bob: all three
+from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001';
+insert into public.likes (post_id, user_id)
+select p.id, '00000000-0000-0000-0000-000000000003'                       -- carol: the two followers posts
+from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.visibility = 'followers';
+insert into public.likes (post_id, user_id)
+select p.id, '00000000-0000-0000-0000-000000000009'                       -- ivan: post 1 only
+from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.caption like 'Seed post 1 %';
+
+insert into public.comments (id, post_id, user_id, body, created_at)
+select 'c0000000-0000-0000-0000-000000000001', p.id, '00000000-0000-0000-0000-000000000003',
+       'Love this one', least(p.created_at + interval '1 hour', now())    -- carol, on post 1
+from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.caption like 'Seed post 1 %'
+union all
+select 'c0000000-0000-0000-0000-000000000002', p.id, '00000000-0000-0000-0000-000000000001',
+       'Thanks!', least(p.created_at + interval '2 hours', now())         -- alice, on her own post 1
+from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.caption like 'Seed post 1 %'
+union all
+select 'c0000000-0000-0000-0000-000000000003', p.id, '00000000-0000-0000-0000-000000000002',
+       'Friends-only gem', least(p.created_at + interval '1 hour', now()) -- bob, on the mutuals post
+from public.posts p where p.user_id = '00000000-0000-0000-0000-000000000001' and p.visibility = 'mutuals';
+
+insert into public.comment_likes (comment_id, user_id) values
+    ('c0000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),   -- alice likes carol's comment
+    ('c0000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002'),   -- bob likes carol's comment
+    ('c0000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003');   -- carol likes alice's reply
+
+-- -----------------------------------------------------------------------
 -- Invites (SOL-60)
 -- -----------------------------------------------------------------------
 -- Three of alice's five: one valid with a fixed value so the SOL-64 walk has
