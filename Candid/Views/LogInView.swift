@@ -22,33 +22,57 @@ struct LogInView: View {
     @State private var message: FormMessage?
 
     var body: some View {
-        Form {
-            Section {
-                TextField("Email", text: $email)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Welcome back")
+                    .font(.newsreader(36))
+                    .foregroundStyle(.candidInk)
+                    .padding(.top, 20)
 
-                SecureField("Password", text: $password)
-                    .textContentType(.password)
-            }
+                VStack(spacing: 0) {
+                    HairlineField(label: "Email") {
+                        TextField("", text: $email)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    HairlineField(label: "Password") {
+                        SecureField("", text: $password)
+                            .textContentType(.password)
+                            .submitLabel(.go)
+                            .onSubmit {
+                                guard canSubmit else { return }
+                                Task { await submit() }
+                            }
+                    }
+                    Rectangle().fill(Color.candidDivider).frame(height: 0.5)
+                }
+                .padding(.top, 28)
 
-            Section {
-                AsyncSubmitButton("Log In", isSubmitting: isSubmitting, isEnabled: canSubmit) {
+                AsyncSubmitButton("Log in", isSubmitting: isSubmitting, isEnabled: canSubmit) {
                     await submit()
                 }
-            }
+                .padding(.top, 26)
 
-            FormMessageSection(message: message)
+                FormMessageSection(message: message)
+                    .padding(.top, message == nil ? 0 : 12)
 
-            Section {
-                Button("Don't have an account? Sign Up") {
+                Button {
                     isShowingSignUp = true
+                } label: {
+                    (Text("New here? ").foregroundStyle(.candidMuted)
+                        + Text("Create an account").foregroundStyle(.candidAccent).fontWeight(.medium))
+                        .font(.system(size: 15))
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 16)
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
         }
-        .navigationTitle("Log In")
+        .scrollDismissesKeyboard(.interactively)
+        .background(Color.candidGround)
         .navigationDestination(isPresented: $isShowingSignUp) {
             SignUpView()
         }

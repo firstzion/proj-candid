@@ -39,6 +39,7 @@ struct EditUsernameSheet: View {
                     // The lengths come from UsernameRules, which the client
                     // does check, so those are interpolated rather than typed.
                     Text("Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores. You can change yours once every 30 days. A name you give up is held for you for 90 days, and anyone who knew it can still find you by it.")
+                        .foregroundStyle(.candidMuted)
                 }
 
                 Section {
@@ -49,13 +50,20 @@ struct EditUsernameSheet: View {
 
                 FormMessageSection(message: message)
             }
-            .navigationTitle("Edit Username")
-            .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Color.candidGround)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Edit Username")
+                        .font(.newsreader(19))
+                        .foregroundStyle(.candidInk)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(.candidAccent)
                 }
             }
+            .toolbarBackground(Color.candidGround, for: .navigationBar)
         }
     }
 

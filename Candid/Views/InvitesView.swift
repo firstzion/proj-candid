@@ -41,7 +41,9 @@ struct InvitesView: View {
                 // where it is enforced — keep the two in sync by hand. The
                 // caller cannot choose it; that was the point of SOL-70.
                 Text("A code admits one person and expires after 30 days if nobody uses it. Swipe an unused code to take it back.")
+                    .foregroundStyle(.candidMuted)
             }
+            .listRowBackground(Color.candidGround)
 
             if let invites {
                 let open = invites.filter { $0.state() == .unredeemed }
@@ -57,6 +59,7 @@ struct InvitesView: View {
                                 }
                         }
                     }
+                    .listRowBackground(Color.candidGround)
                 }
                 if !redeemed.isEmpty {
                     Section("Used") {
@@ -64,6 +67,7 @@ struct InvitesView: View {
                             redeemedRow(invite)
                         }
                     }
+                    .listRowBackground(Color.candidGround)
                 }
                 if !expired.isEmpty {
                     Section("Expired") {
@@ -74,13 +78,23 @@ struct InvitesView: View {
                                 }
                         }
                     }
+                    .listRowBackground(Color.candidGround)
                 }
             }
 
             FormMessageSection(message: message)
+                .listRowBackground(Color.candidGround)
         }
-        .navigationTitle("Invites")
-        .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background(Color.candidGround)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Invites")
+                    .font(.newsreader(19))
+                    .foregroundStyle(.candidInk)
+            }
+        }
+        .toolbarBackground(Color.candidGround, for: .navigationBar)
         .task { await load() }
     }
 
@@ -89,13 +103,16 @@ struct InvitesView: View {
         if let remaining, let quota {
             if remaining == 0 {
                 Text("You've used all \(quota) invites.")
+                    .foregroundStyle(.candidInk)
             } else {
                 Text("\(remaining) of \(quota) invites left")
+                    .foregroundStyle(.candidInk)
             }
         } else if let loadError {
             Text(loadError)
                 .foregroundStyle(.red)
             Button("Try Again") { Task { await load() } }
+                .foregroundStyle(.candidAccent)
         } else {
             ProgressView()
         }
@@ -109,10 +126,11 @@ struct InvitesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(invite.code)
                     .font(.body.monospaced())
+                    .foregroundStyle(.candidInk)
                 if let expiresAt = invite.expiresAt {
                     Text("Expires \(expiresAt, format: .dateTime.month().day())")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.candidMuted)
                 }
             }
             Spacer()
@@ -120,6 +138,7 @@ struct InvitesView: View {
                 Label("Share", systemImage: "square.and.arrow.up")
                     .labelStyle(.iconOnly)
             }
+            .foregroundStyle(.candidAccent)
             .accessibilityLabel("Share code \(invite.code)")
         }
     }
@@ -130,7 +149,7 @@ struct InvitesView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(invite.code)
                 .font(.body.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.candidMuted)
             if let redeemedAt = invite.redeemedAt {
                 Text("Used by \(invite.redeemer.map { "@\($0.username)" } ?? "someone") · \(redeemedAt, format: .dateTime.month().day())")
                     .font(.caption)
@@ -143,7 +162,7 @@ struct InvitesView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(invite.code)
                 .font(.body.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.candidMuted)
             if let expiresAt = invite.expiresAt {
                 Text("Expired \(expiresAt, format: .dateTime.month().day())")
                     .font(.caption)

@@ -98,13 +98,18 @@ struct ProfileScreen: View {
                     countsRow
                     actions
                     messageLine
+                    Text("Your Photos")
+                        .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundStyle(.candidFaint)
+                        .padding(.horizontal)
+                        .padding(.top, 10)
                     grid
                 }
             }
             .padding(.vertical)
         }
-        .navigationTitle(model?.displayedUsername ?? profile.username)
-        .navigationBarTitleDisplayMode(.inline)
+        .background(Color.candidGround)
         .sheet(isPresented: $isEditingUsername) {
             EditUsernameSheet(currentUsername: model?.displayedUsername ?? profile.username) { newName in
                 model?.usernameChanged(to: newName, feedInvalidation: feedInvalidation)
@@ -151,25 +156,31 @@ struct ProfileScreen: View {
     // MARK: - Header, counts and actions
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(model?.displayedUsername ?? profile.username)
-                .font(.title2)
+        HStack(alignment: .center, spacing: 14) {
+            Avatar(username: model?.displayedUsername ?? profile.username, size: 56)
 
-            if model?.isSelf == true {
-                if case .signedIn(_, let email) = sessionStore.state, let email {
-                    Text(email)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model?.displayedUsername ?? profile.username)
+                    .font(.newsreader(30))
+                    .foregroundStyle(.candidInk)
+
+                if model?.isSelf == true {
+                    if case .signedIn(_, let email) = sessionStore.state, let email {
+                        Text(email)
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(.candidMuted)
+                    }
+                } else if let relationship = model?.relationship {
+                    Text(ProfileModel.summary(of: relationship))
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(.candidMuted)
+                } else if let relationshipError = model?.relationshipError {
+                    Text(relationshipError)
+                        .foregroundStyle(.red)
+                    Button("Try Again") { Task { await model(for: profile.id).load() } }
+                } else {
+                    ProgressView()
                 }
-            } else if let relationship = model?.relationship {
-                Text(ProfileModel.summary(of: relationship))
-                    .foregroundStyle(.secondary)
-            } else if let relationshipError = model?.relationshipError {
-                Text(relationshipError)
-                    .foregroundStyle(.red)
-                Button("Try Again") { Task { await model(for: profile.id).load() } }
-            } else {
-                ProgressView()
             }
         }
         .padding(.horizontal)
@@ -197,10 +208,11 @@ struct ProfileScreen: View {
         VStack(spacing: 2) {
             Text(value.map { "\($0)" } ?? "–")
                 .font(.headline)
+                .foregroundStyle(.candidInk)
                 .monospacedDigit()
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.candidMuted)
         }
         .opacity(isEnabled ? 1 : 0.5)
         .accessibilityElement(children: .combine)
@@ -209,21 +221,40 @@ struct ProfileScreen: View {
     @ViewBuilder
     private var actions: some View {
         if model?.isSelf == true {
-            VStack(alignment: .leading, spacing: 12) {
-                Button("Edit Username") { isEditingUsername = true }
-                NavigationLink {
-                    InvitesView()
-                } label: {
-                    Label("Invites", systemImage: "envelope")
+            VStack(spacing: 0) {
+                HairlineRow(isFirst: true) {
+                    Button("Edit Username") { isEditingUsername = true }
+                        .foregroundStyle(.candidAccent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Button("Log Out") { Task { await model?.signOut(sessionStore) } }
-                    .disabled(model?.isSigningOut == true)
-                Button("Delete Account", role: .destructive) { isConfirmingDeleteAccount = true }
-                    .disabled(model?.isDeletingAccount == true)
-                if model?.isDeletingAccount == true {
-                    ProgressView()
+                HairlineRow {
+                    NavigationLink {
+                        InvitesView()
+                    } label: {
+                        Label("Invites", systemImage: "envelope")
+                    }
+                    .foregroundStyle(.candidAccent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HairlineRow {
+                    Button("Log Out") { Task { await model?.signOut(sessionStore) } }
+                        .disabled(model?.isSigningOut == true)
+                        .foregroundStyle(.candidAccent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HairlineRow {
+                    HStack {
+                        Button("Delete Account", role: .destructive) { isConfirmingDeleteAccount = true }
+                            .disabled(model?.isDeletingAccount == true)
+                            .foregroundStyle(.red)
+                        if model?.isDeletingAccount == true {
+                            ProgressView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .buttonStyle(.plain)
             .padding(.horizontal)
         } else if let relationship = model?.relationship {
             HStack(spacing: 16) {
@@ -238,6 +269,7 @@ struct ProfileScreen: View {
                 Button("Report…") { reportTarget = .profile(profile) }
             }
             .buttonStyle(.bordered)
+            .tint(.candidAccent)
             .disabled(model?.isChanging == true)
             .padding(.horizontal)
         }

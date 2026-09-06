@@ -38,8 +38,10 @@ struct PeopleView: View {
                         InvitesView()
                     } label: {
                         Label("Invite a friend", systemImage: "envelope")
+                            .foregroundStyle(.candidAccent)
                     }
                 }
+                .listRowBackground(Color.candidGround)
 
                 if normalizedQuery.count >= Self.minimumLength {
                     Section("People") {
@@ -52,27 +54,49 @@ struct PeopleView: View {
                             Button {
                                 selectedProfile = renamed.profile
                             } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(renamed.profile.username)
-                                    Text("was @\(renamed.former)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                HStack(spacing: 10) {
+                                    Avatar(username: renamed.profile.username)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(renamed.profile.username)
+                                            .foregroundStyle(.candidInk)
+                                        Text("was @\(renamed.former)")
+                                            .font(.caption)
+                                            .foregroundStyle(.candidMuted)
+                                    }
                                 }
                             }
                         } else if results.isEmpty {
                             // One of the six empty states (SOL-40), in the
                             // compact form a list row wants.
                             Text(EmptyState.searchNoResults(query: normalizedQuery).message)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.candidMuted)
                         } else {
                             ForEach(results) { person in
-                                Button(person.username) { selectedProfile = person }
+                                Button {
+                                    selectedProfile = person
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Avatar(username: person.username)
+                                        Text(person.username)
+                                            .foregroundStyle(.candidInk)
+                                    }
+                                }
                             }
                         }
                     }
+                    .listRowBackground(Color.candidGround)
                 }
             }
-            .navigationTitle("People")
+            .scrollContentBackground(.hidden)
+            .background(Color.candidGround)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("People")
+                        .font(.newsreader(19))
+                        .foregroundStyle(.candidInk)
+                }
+            }
+            .toolbarBackground(Color.candidGround, for: .navigationBar)
             .searchable(text: $query, prompt: "Search by username")
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()

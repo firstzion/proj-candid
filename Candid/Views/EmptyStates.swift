@@ -64,22 +64,55 @@ enum EmptyState: Hashable {
     }
 }
 
-/// The shared look: `ContentUnavailableView` with the state's copy and, where
-/// there is one, its action.
+/// The shared look: a blank print card, tilted, standing in for the photo
+/// that isn't there yet — `ContentUnavailableView`'s SF Symbol + grey type
+/// reads too system-generic for an app that otherwise looks like a photo
+/// album (design spec, 1i).
 struct EmptyStateView: View {
     let state: EmptyState
     var action: (() -> Void)? = nil
 
     var body: some View {
-        ContentUnavailableView {
-            Label(state.title, systemImage: state.systemImage)
-        } description: {
+        VStack(spacing: 0) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 0)
+                    .fill(Color.candidSurface)
+                    .frame(width: 96, height: 112)
+                    .overlay(
+                        Rectangle().strokeBorder(Color.candidInk.opacity(0.16))
+                    )
+                Image(systemName: state.systemImage)
+                    .foregroundStyle(.candidFaint)
+            }
+            .rotationEffect(.degrees(-3))
+
+            Text(state.title)
+                .font(.newsreader(24))
+                .foregroundStyle(.candidInk)
+                .padding(.top, 30)
+
             Text(state.message)
-        } actions: {
+                .font(.newsreader(17))
+                .foregroundStyle(.candidMuted)
+                .padding(.top, 9)
+
             if let title = state.actionTitle, let action {
-                Button(title, action: action)
+                Button(action: action) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.candidGround)
+                        .padding(.horizontal, 22)
+                        .frame(height: 46)
+                        .background(Color.candidAccent)
+                        .clipShape(Capsule())
+                }
+                .padding(.top, 26)
             }
         }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 46)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.candidGround)
     }
 }
 

@@ -22,6 +22,10 @@ struct CandidApp: App {
         } catch {
             launchState = .misconfigured(error)
         }
+        // SwiftUI's `.tint` only reaches the selected tab item; the inactive
+        // one has no view-level modifier, so it's set once here to match the
+        // design's #8F9793 rather than the system default gray.
+        UITabBar.appearance().unselectedItemTintColor = UIColor(Color.candidBorder)
     }
 
     var body: some Scene {

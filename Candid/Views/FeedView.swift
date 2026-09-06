@@ -49,7 +49,17 @@ struct FeedView: View {
                     ProgressView()
                 }
             }
-            .navigationTitle("Feed")
+            .background(Color.candidGround)
+            .toolbar {
+                // The wordmark stands in for a nav title everywhere it
+                // appears — Feed is the one screen the design keeps it on.
+                ToolbarItem(placement: .principal) {
+                    Text("Candid")
+                        .font(.newsreader(28))
+                        .foregroundStyle(.candidInk)
+                }
+            }
+            .toolbarBackground(Color.candidGround, for: .navigationBar)
             .navigationDestination(item: $selectedProfile) { profile in
                 ProfileScreen(profile: profile)
             }
@@ -109,6 +119,8 @@ struct FeedView: View {
             List {
                 ForEach(model.paged.posts) { post in
                     feedRow(for: post)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.candidGround)
                         .onAppear {
                             if post.id == model.paged.posts.last?.id {
                                 Task { await model.paged.loadMore() }
@@ -117,8 +129,12 @@ struct FeedView: View {
                 }
 
                 LoadMoreFooter(paged: model.paged)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.candidGround)
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.candidGround)
             .refreshable { await model.refresh() }
 
         case .failed(let message):
@@ -198,14 +214,17 @@ private struct FeedPostRow: View {
     private static let relativeCutoff: TimeInterval = 7 * 24 * 60 * 60
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                Avatar(username: post.username)
+
                 // The author's name opens their profile. Plain style, so only
                 // the name is the target — not the whole row, which a List
                 // would otherwise hand to a default-styled button.
                 Button(action: onOpenProfile) {
                     Text(post.username)
-                        .font(.headline)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.candidInk)
                 }
                 .buttonStyle(.plain)
 
@@ -219,7 +238,7 @@ private struct FeedPostRow: View {
                 if post.visibility == .mutuals {
                     Label(PostVisibility.mutuals.title, systemImage: "person.2")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.candidMuted)
                 }
             }
 
@@ -229,15 +248,19 @@ private struct FeedPostRow: View {
                 accessibilityLabel: post.caption ?? "Photo by \(post.username)",
                 imageCache: services.imageCache
             )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if let caption = post.caption {
                 Text(caption)
+                    .font(.newsreader(17.5))
+                    .foregroundStyle(.candidBody)
             }
 
             timestamp
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(.candidMuted)
         }
+        .padding(.horizontal, 20)
         .padding(.vertical, 4)
         // Reads as one element — "username, photo, caption, 5 minutes ago" —
         // rather than four separate stops for VoiceOver to swipe through.

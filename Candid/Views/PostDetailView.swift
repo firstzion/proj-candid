@@ -24,15 +24,17 @@ struct PostDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 10) {
+                    Avatar(username: post.username)
                     Text(post.username)
-                        .font(.headline)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.candidInk)
                     Spacer()
                     if post.visibility == .mutuals {
                         Label(PostVisibility.mutuals.title, systemImage: "person.2")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.candidMuted)
                     }
                 }
 
@@ -42,14 +44,17 @@ struct PostDetailView: View {
                     accessibilityLabel: post.caption ?? "Photo by \(post.username)",
                     imageCache: services.imageCache
                 )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 if let caption = post.caption {
                     Text(caption)
+                        .font(.newsreader(17.5))
+                        .foregroundStyle(.candidBody)
                 }
 
                 Text(post.createdAt, format: .dateTime.month().day().year().hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.candidMuted)
 
                 if let deleteError {
                     Text(deleteError)
@@ -58,9 +63,13 @@ struct PostDetailView: View {
             }
             .padding()
         }
-        .navigationTitle("Post")
-        .navigationBarTitleDisplayMode(.inline)
+        .background(Color.candidGround)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Post")
+                    .font(.newsreader(19))
+                    .foregroundStyle(.candidInk)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 if isOwn {
                     Button(role: .destructive) {
@@ -75,6 +84,7 @@ struct PostDetailView: View {
                     } label: {
                         Label("Report Post", systemImage: "flag")
                     }
+                    .foregroundStyle(.candidAccent)
                 }
             }
         }

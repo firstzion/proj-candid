@@ -39,9 +39,19 @@ struct FollowListView: View {
                     )
                 } else {
                     List(people) { person in
-                        Button(person.username) { selectedProfile = person }
+                        Button {
+                            selectedProfile = person
+                        } label: {
+                            HStack(spacing: 10) {
+                                Avatar(username: person.username)
+                                Text(person.username)
+                                    .foregroundStyle(.candidInk)
+                            }
+                        }
+                        .listRowBackground(Color.candidGround)
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             } else if let loadError {
                 ContentUnavailableView {
@@ -55,8 +65,15 @@ struct FollowListView: View {
                 ProgressView()
             }
         }
-        .navigationTitle(kind.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .background(Color.candidGround)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(kind.title)
+                    .font(.newsreader(19))
+                    .foregroundStyle(.candidInk)
+            }
+        }
+        .toolbarBackground(Color.candidGround, for: .navigationBar)
         .navigationDestination(item: $selectedProfile) { person in
             ProfileScreen(profile: person)
         }

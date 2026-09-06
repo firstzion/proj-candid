@@ -31,6 +31,7 @@ struct RootTabView: View {
                 }
                 .tag(TabSelection.Tab.profile)
         }
+        .tint(.candidAccent)
         .environment(tabSelection)
     }
 }

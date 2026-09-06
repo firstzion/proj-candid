@@ -28,70 +28,68 @@ struct PostView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    if let selectedImage {
-                        Image(uiImage: selectedImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity)
-                            .frame(maxHeight: 320)
-                    } else if isLoadingImage {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                            Spacer()
-                        }
-                    } else {
-                        Text("No photo selected yet.")
-                            .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    photoPreview
+                        .padding(.top, 4)
+
+                    HStack {
+                        Spacer()
+                        photoPickerCapsule
+                        Spacer()
                     }
-                }
-
-                Section {
-                    PhotosPicker(
-                        selectedImage == nil ? "Choose Photo" : "Choose a Different Photo",
-                        selection: $pickerItem,
-                        matching: .images,
-                        photoLibrary: .shared()
-                    )
-
-                    // Only offered where a camera exists.
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button("Take Photo") { isShowingCamera = true }
-                    }
-                }
-                .disabled(isPosting)
-
-                Section("Caption") {
-                    TextField("Optional", text: $caption, axis: .vertical)
-                        .lineLimit(1...4)
-                        .disabled(isPosting)
-                }
-
-                Section {
-                    Picker("Who can see this", selection: $visibility) {
-                        ForEach(PostVisibility.allCases, id: \.self) { tier in
-                            Text(tier.title).tag(tier)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    .padding(.top, 14)
                     .disabled(isPosting)
-                } header: {
-                    Text("Who can see this")
-                } footer: {
-                    Text("Friends are people you follow who follow you back. A post's audience can't be changed later — delete and repost instead.")
-                }
 
-                Section {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Rectangle().fill(Color.candidDivider).frame(height: 0.5)
+                        TextField("", text: $caption, axis: .vertical)
+                            .font(.newsreader(17.5))
+                            .foregroundStyle(.candidBody)
+                            .tint(.candidAccent)
+                            .lineLimit(1...4)
+                            .disabled(isPosting)
+                            .padding(.top, 16)
+                            .accessibilityLabel("Caption")
+                        Text("Caption optional")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(.candidFaint)
+                            .padding(.top, 10)
+                    }
+                    .padding(.top, 26)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Who can see this")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.candidMuted)
+                        VisibilityToggle(selection: $visibility)
+                            .disabled(isPosting)
+                        Text("Friends are people you follow who follow you back. A post's audience can't be changed later — delete and repost instead.")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(.candidFaint)
+                    }
+                    .padding(.top, 30)
+
                     AsyncSubmitButton("Post", isSubmitting: isPosting, isEnabled: selectedImage != nil) {
                         await post()
                     }
-                }
+                    .padding(.top, 30)
 
-                FormMessageSection(message: message)
+                    FormMessageSection(message: message)
+                        .padding(.top, message == nil ? 0 : 12)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
             }
-            .navigationTitle("New Post")
+            .background(Color.candidGround)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("New Post")
+                        .font(.newsreader(19))
+                        .foregroundStyle(.candidInk)
+                }
+            }
+            .toolbarBackground(Color.candidGround, for: .navigationBar)
         }
         // Cancelling the picker leaves the selection untouched, so the previous
         // photo simply stays.
@@ -111,6 +109,66 @@ struct PostView: View {
                 imageLoadTask = Task { await useCapturedImage(captured) }
             }
             .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private var photoPreview: some View {
+        if let selectedImage {
+            Image(uiImage: selectedImage)
+                .resizable()
+                .aspectRatio(4 / 5, contentMode: .fill)
+                .frame(maxWidth: .infinity)
+                .frame(height: 400)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipped()
+        } else if isLoadingImage {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.candidSurface)
+                .frame(maxWidth: .infinity)
+                .frame(height: 400)
+                .overlay { ProgressView() }
+        } else {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.candidSurface)
+                .frame(maxWidth: .infinity)
+                .frame(height: 400)
+                .overlay {
+                    Text("No photo selected yet.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.candidFaint)
+                }
+        }
+    }
+
+    /// One capsule standing in for both photo sources — the design shows a
+    /// single "Choose another" capsule, and a `Menu` keeps the camera option
+    /// (which the mock doesn't cover at all) without adding a second control.
+    private var photoPickerCapsule: some View {
+        Menu {
+            PhotosPicker(
+                selectedImage == nil ? "Choose Photo" : "Choose a Different Photo",
+                selection: $pickerItem,
+                matching: .images,
+                photoLibrary: .shared()
+            )
+            // Only offered where a camera exists.
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Photo") { isShowingCamera = true }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "photo.on.rectangle")
+                    .font(.system(size: 14))
+                Text(selectedImage == nil ? "Choose Photo" : "Choose Another")
+                    .font(.system(size: 14.5))
+            }
+            .foregroundStyle(.candidMuted)
+            .padding(.horizontal, 16)
+            .frame(height: 36)
+            .overlay {
+                Capsule().strokeBorder(Color.candidBorder.opacity(0.6))
+            }
         }
     }
 
@@ -212,6 +270,39 @@ struct PostView: View {
         }
 
         isPosting = false
+    }
+}
+
+/// Two-segment capsule, filled with the accent when selected — the design
+/// never shows this control at all (its compose mock has no visibility
+/// picker), so this follows the capsule vocabulary the mock uses elsewhere
+/// ("Choose another", the primary button) rather than retinting the native
+/// segmented control.
+private struct VisibilityToggle: View {
+    @Binding var selection: PostVisibility
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(PostVisibility.allCases, id: \.self) { tier in
+                let isSelected = tier == selection
+                Button {
+                    selection = tier
+                } label: {
+                    Text(tier.title)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(isSelected ? Color.candidGround : Color.candidInk)
+                        .padding(.horizontal, 18)
+                        .frame(height: 36)
+                        .background {
+                            Capsule().fill(isSelected ? Color.candidAccent : Color.clear)
+                        }
+                        .overlay {
+                            Capsule().strokeBorder(Color.candidBorder.opacity(isSelected ? 0 : 0.6))
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 

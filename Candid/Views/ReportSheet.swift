@@ -65,17 +65,25 @@ struct ReportSheet: View {
                     }
                 } footer: {
                     Text("They won't be told.")
+                        .foregroundStyle(.candidMuted)
                 }
 
                 FormMessageSection(message: message)
             }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Color.candidGround)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .font(.newsreader(19))
+                        .foregroundStyle(.candidInk)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(.candidAccent)
                 }
             }
+            .toolbarBackground(Color.candidGround, for: .navigationBar)
         }
     }
 

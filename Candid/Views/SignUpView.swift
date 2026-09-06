@@ -23,48 +23,96 @@ struct SignUpView: View {
     @State private var message: FormMessage?
 
     var body: some View {
-        Form {
-            Section {
-                TextField("Email", text: $email)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Create your account")
+                    .font(.newsreader(36))
+                    .foregroundStyle(.candidInk)
+                    .padding(.top, 8)
 
-                SecureField("Password", text: $password)
-                    .textContentType(.newPassword)
+                Text("Three things, then you are in.")
+                    .font(.newsreader(17))
+                    .foregroundStyle(.candidMuted)
+                    .padding(.top, 10)
 
-                TextField("Username", text: $username)
-                    .textContentType(.username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                VStack(spacing: 0) {
+                    HairlineField(label: "Email") {
+                        TextField("", text: $email)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    HairlineField(label: "Password") {
+                        SecureField("", text: $password)
+                            .textContentType(.newPassword)
+                    }
+                    HairlineField(label: "Username") {
+                        TextField("", text: $username)
+                            .textContentType(.username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    // Sign-up is invite-only (SOL-61). Pre-filled from an
+                    // invite link when there is one; typed from the message
+                    // otherwise.
+                    HairlineField(label: "Invite code") {
+                        TextField("", text: $inviteCode)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                    }
+                    Rectangle().fill(Color.candidDivider).frame(height: 0.5)
+                }
+                .padding(.top, 34)
 
-                // Sign-up is invite-only (SOL-61). Pre-filled from an invite
-                // link when there is one; typed from the message otherwise.
-                TextField("Invite code", text: $inviteCode)
-                    .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
-            } footer: {
-                // "10" mirrors minimum_password_length in supabase/config.toml,
-                // not a client-enforced rule — keep the two in sync by hand.
+                // "10" mirrors minimum_password_length in
+                // supabase/config.toml, not a client-enforced rule — keep the
+                // two in sync by hand.
                 Text("Candid is invite-only: you need a code from someone who is already here. Passwords must be at least 10 characters. Usernames are \(UsernameRules.minLength)–\(UsernameRules.maxLength) characters: lowercase letters, numbers and underscores.")
-            }
+                    .font(.system(size: 13))
+                    .foregroundStyle(.candidMuted)
+                    .padding(.top, 12)
 
-            Section {
-                AsyncSubmitButton("Sign Up", isSubmitting: isSubmitting, isEnabled: canSubmit) {
+                AsyncSubmitButton("Create account", isSubmitting: isSubmitting, isEnabled: canSubmit) {
                     await submit()
                 }
-            }
+                .padding(.top, 40)
 
-            FormMessageSection(message: message)
+                FormMessageSection(message: message)
+                    .padding(.top, message == nil ? 0 : 12)
 
-            Section {
-                Button("Already have an account? Log In") {
+                Button {
                     dismiss()
+                } label: {
+                    (Text("Already have an account? ").foregroundStyle(.candidMuted)
+                        + Text("Log in").foregroundStyle(.candidAccent).fontWeight(.medium))
+                        .font(.system(size: 15))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 18)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Color.candidGround)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 17))
+                    }
+                    .foregroundStyle(.candidAccent)
                 }
             }
         }
-        .navigationTitle("Sign Up")
+        .toolbarBackground(Color.candidGround, for: .navigationBar)
         .task { takePendingInvite() }
         .onChange(of: pendingInvite.code) { takePendingInvite() }
     }

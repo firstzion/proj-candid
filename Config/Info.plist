@@ -14,6 +14,14 @@
 	<string>$(SUPABASE_API_HOST)</string>
 	<key>SUPABASE_PUBLISHABLE_KEY</key>
 	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
+	<!-- Newsreader (OFL, Resources/Fonts) is a variable font; the family's
+	     default named instance is Regular/Italic at wght 400 — every use in
+	     the design is that weight, so no other instance needs registering. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>Newsreader.ttf</string>
+		<string>Newsreader-Italic.ttf</string>
+	</array>
 	<!-- Auth callback deep link. Supabase's site_url (supabase/config.toml)
 	     points confirmation/reset/magic-link emails here; CandidApp's
 	     onOpenURL hands the incoming URL to client.auth.session(from:). -->
