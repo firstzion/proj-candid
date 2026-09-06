@@ -40,6 +40,10 @@ struct ProfileScreen: View {
     @Environment(TabSelection.self) private var tabSelection
     @EnvironmentObject private var sessionStore: SessionStore
 
+    /// `RootView` is what actually applies this; the switcher just lives
+    /// here, on the one screen that's always yours.
+    @AppStorage("appearanceMode") private var appearanceMode: AppearanceMode = .system
+
     /// Built in `.task` rather than `init`, since it needs `services` and
     /// `sessionStore`, neither available there.
     @State private var model: ProfileModel?
@@ -221,6 +225,16 @@ struct ProfileScreen: View {
     @ViewBuilder
     private var actions: some View {
         if model?.isSelf == true {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Appearance")
+                    .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                    .tracking(1.1)
+                    .foregroundStyle(.candidFaint)
+                CapsuleToggle(selection: $appearanceMode, title: \.title)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 14)
+
             VStack(spacing: 0) {
                 HairlineRow(isFirst: true) {
                     Button("Edit Username") { isEditingUsername = true }

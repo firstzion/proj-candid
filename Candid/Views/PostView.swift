@@ -62,7 +62,7 @@ struct PostView: View {
                         Text("Who can see this")
                             .font(.system(size: 13))
                             .foregroundStyle(.candidMuted)
-                        VisibilityToggle(selection: $visibility)
+                        CapsuleToggle(selection: $visibility, title: \.title)
                             .disabled(isPosting)
                         Text("Friends are people you follow who follow you back. A post's audience can't be changed later — delete and repost instead.")
                             .font(.system(size: 12.5))
@@ -270,39 +270,6 @@ struct PostView: View {
         }
 
         isPosting = false
-    }
-}
-
-/// Two-segment capsule, filled with the accent when selected — the design
-/// never shows this control at all (its compose mock has no visibility
-/// picker), so this follows the capsule vocabulary the mock uses elsewhere
-/// ("Choose another", the primary button) rather than retinting the native
-/// segmented control.
-private struct VisibilityToggle: View {
-    @Binding var selection: PostVisibility
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(PostVisibility.allCases, id: \.self) { tier in
-                let isSelected = tier == selection
-                Button {
-                    selection = tier
-                } label: {
-                    Text(tier.title)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(isSelected ? Color.candidGround : Color.candidInk)
-                        .padding(.horizontal, 18)
-                        .frame(height: 36)
-                        .background {
-                            Capsule().fill(isSelected ? Color.candidAccent : Color.clear)
-                        }
-                        .overlay {
-                            Capsule().strokeBorder(Color.candidBorder.opacity(isSelected ? 0 : 0.6))
-                        }
-                }
-                .buttonStyle(.plain)
-            }
-        }
     }
 }
 
