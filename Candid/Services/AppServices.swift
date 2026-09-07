@@ -15,6 +15,7 @@ struct AppServices {
     let storage: StorageService
     let invite: InviteService
     let report: ReportService
+    let like: LikeService
     let imageCache: ImageCache
 
     /// `currentUserID` overrides the default `client.auth.session.user.id`
@@ -36,6 +37,7 @@ struct AppServices {
         storage = StorageService(client: client)
         invite = InviteService(client: client)
         report = ReportService(client: client)
+        like = LikeService(client: client, currentUserID: currentUserID)
         self.imageCache = imageCache
     }
 }

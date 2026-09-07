@@ -49,6 +49,7 @@ private struct ConfiguredRootScene: View {
 
     @StateObject private var sessionStore: SessionStore
     @State private var feedInvalidation = FeedInvalidation()
+    @State private var engagementStore = EngagementStore()
     @State private var pendingInvite = PendingInvite()
 
     init(services: AppServices, client: SupabaseClient) {
@@ -62,6 +63,7 @@ private struct ConfiguredRootScene: View {
             .environmentObject(sessionStore)
             .environment(\.services, services)
             .environment(feedInvalidation)
+            .environment(engagementStore)
             .environment(pendingInvite)
             .task { await sessionStore.observe() }
             .onOpenURL { url in

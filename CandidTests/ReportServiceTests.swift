@@ -25,6 +25,7 @@ struct ReportServiceTests {
         FeedPost(
             id: UUID(), authorID: alice, imagePath: "\(alice.uuidString.lowercased())/x.jpg", imageURL: nil,
             caption: nil, createdAt: .now, username: "alice", visibility: .followers,
+            engagement: PostEngagement(likeCount: 0, commentCount: 0, isLikedByViewer: false),
             cursor: FeedCursor(createdAt: "2026-09-04T14:04:30.909561+00:00", id: UUID())
         )
     }

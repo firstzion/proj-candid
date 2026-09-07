@@ -12,11 +12,15 @@ struct PostDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.services) private var services
     @Environment(FeedInvalidation.self) private var feedInvalidation
+    @Environment(EngagementStore.self) private var engagementStore
     @EnvironmentObject private var sessionStore: SessionStore
 
     @State private var isConfirmingDelete = false
     @State private var isDeleting = false
-    @State private var deleteError: String?
+
+    /// The last action's failure — a delete, a block from a report, or a like
+    /// the server refused.
+    @State private var actionError: String?
 
     @State private var reportTarget: ReportSheet.Target?
 
@@ -46,6 +50,12 @@ struct PostDetailView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
+                PostActionsRow(
+                    engagement: engagementStore.engagement(for: post),
+                    isBusy: engagementStore.isBusy(post.id),
+                    onToggleLike: { Task { await toggleLike() } }
+                )
+
                 if let caption = post.caption {
                     Text(caption)
                         .font(.newsreader(17.5))
@@ -56,8 +66,8 @@ struct PostDetailView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.candidMuted)
 
-                if let deleteError {
-                    Text(deleteError)
+                if let actionError {
+                    Text(actionError)
                         .foregroundStyle(.red)
                 }
             }
@@ -100,13 +110,22 @@ struct PostDetailView: View {
     /// other, so this post is gone from the viewer's world: mark the feed
     /// stale — which reloads the profile behind this screen — and go back.
     private func block(_ person: Profile) async {
-        deleteError = nil
+        actionError = nil
         do {
             try await services.follow.block(person.id)
             feedInvalidation.markStale()
             dismiss()
         } catch {
-            deleteError = error.localizedDescription
+            actionError = error.localizedDescription
+        }
+    }
+
+    /// The heart, through the same store the feed reads, so a like made here
+    /// is on the feed row when this screen is popped (SOL-89).
+    private func toggleLike() async {
+        actionError = nil
+        if let error = await engagementStore.toggleLike(on: post, using: services.like) {
+            actionError = error
         }
     }
 
@@ -115,7 +134,7 @@ struct PostDetailView: View {
     /// this screen goes away, since what it showed no longer exists.
     private func delete() async {
         isDeleting = true
-        deleteError = nil
+        actionError = nil
         defer { isDeleting = false }
 
         do {
@@ -123,7 +142,7 @@ struct PostDetailView: View {
             feedInvalidation.markStale()
             dismiss()
         } catch {
-            deleteError = error.localizedDescription
+            actionError = error.localizedDescription
         }
     }
 }

@@ -97,6 +97,7 @@ struct PagedPostsTests {
             createdAt: Date(timeIntervalSince1970: TimeInterval(seconds)),
             username: "alice",
             visibility: .followers,
+            engagement: PostEngagement(likeCount: 0, commentCount: 0, isLikedByViewer: false),
             cursor: FeedCursor(createdAt: "2026-09-04T14:04:\(seconds).909561+00:00", id: UUID())
         )
     }

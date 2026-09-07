@@ -97,6 +97,9 @@ struct FeedServiceDecodingTests {
         #expect(page1.posts[0].visibility == .mutuals)
         #expect(page1.posts[1].visibility == .followers)
 
+        // The three computed columns ride along with each row (SOL-89).
+        #expect(page1.posts[0].engagement == PostEngagement(likeCount: 3, commentCount: 1, isLikedByViewer: true))
+
         // The unsigned row (index 5) is kept, with no URL, rather than
         // dropped and silently shortening the page.
         let unsignedPost = try #require(page1.posts.first { $0.imagePath == unsignedPath })
@@ -165,6 +168,11 @@ struct FeedServiceDecodingTests {
         let query = scoped.queryParameters
         #expect(query["user_id"] == "eq.\(author.uuidString)")
         #expect(query["limit"] == "\(FeedService.defaultLimit + 1)")
+        // Computed columns are never part of `*`, so the select has to name
+        // them — or every card shows nothing (SOL-89).
+        #expect(query["select"]?.contains("post_like_count") == true)
+        #expect(query["select"]?.contains("post_comment_count") == true)
+        #expect(query["select"]?.contains("post_liked_by_viewer") == true)
         #expect(query["order"]?.hasPrefix("created_at.desc") == true)
         #expect(query["order"]?.contains("id.desc") == true)
         #expect(query["or"]?.contains("created_at.lt.\(cursor.createdAt)") == true)
@@ -203,7 +211,7 @@ struct FeedServiceDecodingTests {
 
     private static func rowsJSON(_ rows: [Row]) -> Data {
         let body = rows.map { row in
-            #"{"id":"\#(row.id.uuidString)","user_id":"\#(Self.authorID.uuidString.lowercased())","image_path":"\#(row.imagePath)","caption":null,"visibility":"\#(row.visibility.rawValue)","created_at":"\#(row.createdAt)","profiles":{"username":"\#(row.username)"}}"#
+            #"{"id":"\#(row.id.uuidString)","user_id":"\#(Self.authorID.uuidString.lowercased())","image_path":"\#(row.imagePath)","caption":null,"visibility":"\#(row.visibility.rawValue)","created_at":"\#(row.createdAt)","post_like_count":3,"post_comment_count":1,"post_liked_by_viewer":true,"profiles":{"username":"\#(row.username)"}}"#
         }.joined(separator: ",")
         return Data("[\(body)]".utf8)
     }

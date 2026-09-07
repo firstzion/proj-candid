@@ -9,6 +9,7 @@ struct FeedView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.services) private var services
     @Environment(FeedInvalidation.self) private var feedInvalidation
+    @Environment(EngagementStore.self) private var engagementStore
     @EnvironmentObject private var sessionStore: SessionStore
     @Environment(TabSelection.self) private var tabSelection
 
@@ -160,9 +161,13 @@ struct FeedView: View {
     /// offered where the request would match no rows.
     @ViewBuilder
     private func feedRow(for post: FeedPost) -> some View {
-        let row = FeedPostRow(post: post) {
-            selectedProfile = Profile(id: post.authorID, username: post.username)
-        }
+        let row = FeedPostRow(
+            post: post,
+            engagement: engagementStore.engagement(for: post),
+            isLikeBusy: engagementStore.isBusy(post.id),
+            onOpenProfile: { selectedProfile = Profile(id: post.authorID, username: post.username) },
+            onToggleLike: { Task { await toggleLike(post) } }
+        )
         if post.authorID == sessionStore.currentUserID {
             row.contextMenu {
                 Button(role: .destructive) {
@@ -189,6 +194,15 @@ struct FeedView: View {
         isShowingActionError = true
     }
 
+    /// The heart (SOL-89). Optimistic: the store shows the result at once and
+    /// puts the old state back, handing back a message, if the server
+    /// refuses. Nothing marks the feed stale for a like.
+    private func toggleLike(_ post: FeedPost) async {
+        guard let error = await engagementStore.toggleLike(on: post, using: services.like) else { return }
+        actionError = error
+        isShowingActionError = true
+    }
+
     private func delete(_ post: FeedPost) async {
         guard let model, let error = await model.delete(post, feedInvalidation: feedInvalidation) else { return }
         actionError = error
@@ -201,9 +215,17 @@ struct FeedView: View {
 private struct FeedPostRow: View {
     let post: FeedPost
 
+    /// What the heart shows: the row's numbers with any optimistic override
+    /// `EngagementStore` lays over them (SOL-89).
+    let engagement: PostEngagement
+    let isLikeBusy: Bool
+
     /// Opens the author's profile — from the username, or from VoiceOver's
     /// actions rotor, since the row reads as one element.
     let onOpenProfile: () -> Void
+
+    /// Likes or unlikes the post — from the heart, or from the actions rotor.
+    let onToggleLike: () -> Void
 
     @Environment(\.services) private var services
 
@@ -250,6 +272,8 @@ private struct FeedPostRow: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
+            PostActionsRow(engagement: engagement, isBusy: isLikeBusy, onToggleLike: onToggleLike)
+
             if let caption = post.caption {
                 Text(caption)
                     .font(.newsreader(17.5))
@@ -268,6 +292,9 @@ private struct FeedPostRow: View {
         // Combining swallows the username button, so the same action is
         // offered where VoiceOver users expect it: in the actions rotor.
         .accessibilityAction(named: "View profile", onOpenProfile)
+        // The heart is swallowed the same way; its count still reads through
+        // the button's accessibility value.
+        .accessibilityAction(named: engagement.isLikedByViewer ? "Unlike" : "Like", onToggleLike)
     }
 
     private var timestamp: Text {
@@ -284,5 +311,6 @@ private struct FeedPostRow: View {
         .environmentObject(SessionStore(client: .preview))
         .environment(\.services, AppServices(client: .preview))
         .environment(FeedInvalidation())
+        .environment(EngagementStore())
         .environment(TabSelection())
 }

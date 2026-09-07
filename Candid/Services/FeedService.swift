@@ -33,6 +33,14 @@ struct FeedService {
     /// rows exist for the caller. A one-way follower's grid of someone shows
     /// exactly the posts their feed would.
     ///
+    /// The three engagement columns — `post_like_count`, `post_comment_count`
+    /// and `post_liked_by_viewer` — are PostgREST *computed columns*:
+    /// functions of the `posts` row type that PostgREST exposes as virtual
+    /// columns, selectable by name and never part of `*`, which is why this
+    /// select spells every column out. They run as the caller under RLS, so
+    /// the numbers are "the likes you can see" (SOL-88, SOL-89), and twenty
+    /// posts stay one request rather than sixty-one.
+    ///
     /// Pass the previous page's last post's `cursor` as `before` to fetch the
     /// next page; omit it for the first page. The query asks for `limit + 1`
     /// rows and returns at most `limit`; whether the extra row came back is
@@ -47,7 +55,7 @@ struct FeedService {
         do {
             var query = client
                 .from("posts")
-                .select("id, user_id, image_path, caption, visibility, created_at, profiles(username)")
+                .select("id, user_id, image_path, caption, visibility, created_at, post_like_count, post_comment_count, post_liked_by_viewer, profiles(username)")
 
             if let authorID {
                 query = query.eq("user_id", value: authorID)
@@ -91,6 +99,11 @@ struct FeedService {
                     createdAt: row.createdAt,
                     username: row.profiles.username,
                     visibility: row.visibility,
+                    engagement: PostEngagement(
+                        likeCount: row.likeCount,
+                        commentCount: row.commentCount,
+                        isLikedByViewer: row.isLikedByViewer
+                    ),
                     cursor: FeedCursor(createdAt: row.createdAtRaw, id: row.id)
                 )
             }
@@ -124,6 +137,9 @@ private struct PostRow: Decodable {
     let visibility: PostVisibility
     let createdAt: Date
     let createdAtRaw: String
+    let likeCount: Int
+    let commentCount: Int
+    let isLikedByViewer: Bool
     let profiles: ProfileUsername
 
     struct ProfileUsername: Decodable {
@@ -137,6 +153,9 @@ private struct PostRow: Decodable {
         case caption
         case visibility
         case createdAt = "created_at"
+        case likeCount = "post_like_count"
+        case commentCount = "post_comment_count"
+        case isLikedByViewer = "post_liked_by_viewer"
         case profiles
     }
 
@@ -149,6 +168,9 @@ private struct PostRow: Decodable {
         visibility = try container.decode(PostVisibility.self, forKey: .visibility)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         createdAtRaw = try container.decode(String.self, forKey: .createdAt)
+        likeCount = try container.decode(Int.self, forKey: .likeCount)
+        commentCount = try container.decode(Int.self, forKey: .commentCount)
+        isLikedByViewer = try container.decode(Bool.self, forKey: .isLikedByViewer)
         profiles = try container.decode(ProfileUsername.self, forKey: .profiles)
     }
 }

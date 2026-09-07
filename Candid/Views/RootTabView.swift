@@ -88,4 +88,5 @@ private struct ProfileTab: View {
         .environmentObject(SessionStore(client: .preview))
         .environment(\.services, AppServices(client: .preview))
         .environment(FeedInvalidation())
+        .environment(EngagementStore())
 }

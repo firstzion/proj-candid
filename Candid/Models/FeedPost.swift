@@ -33,6 +33,13 @@ struct FeedPost: Identifiable, Hashable {
     /// photo went to everyone who follows the author or to friends only.
     let visibility: PostVisibility
 
+    /// How many liked it, how many commented, and whether the viewer is one
+    /// of the likers — the server's word, from three computed columns
+    /// (SOL-89). What is drawn is `EngagementStore.engagement(for:)`, which
+    /// lays an optimistic override over this value for as long as it still
+    /// matches the row the override was derived from.
+    let engagement: PostEngagement
+
     /// The cursor for fetching the page after this post — see
     /// `FeedService.fetchPosts(before:limit:)`. Carried as a stored property,
     /// set from the row's raw `created_at` text, rather than derived from

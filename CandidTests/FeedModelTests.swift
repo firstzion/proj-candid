@@ -85,7 +85,7 @@ struct FeedModelTests {
             switch (request.httpMethod, request.url?.path) {
             case ("GET", "/rest/v1/posts"):
                 let rows = [ids.0, ids.1].map { id in
-                    #"{"id":"\#(id.uuidString)","user_id":"\#(Self.author.uuidString)","image_path":"\#(id.uuidString).jpg","caption":null,"visibility":"followers","created_at":"2026-09-04T14:04:30.000000+00:00","profiles":{"username":"alice"}}"#
+                    #"{"id":"\#(id.uuidString)","user_id":"\#(Self.author.uuidString)","image_path":"\#(id.uuidString).jpg","caption":null,"visibility":"followers","created_at":"2026-09-04T14:04:30.000000+00:00","post_like_count":0,"post_comment_count":0,"post_liked_by_viewer":false,"profiles":{"username":"alice"}}"#
                 }
                 return .init(body: Data("[\(rows.joined(separator: ","))]".utf8))
             case let (_, path?) where path.contains("/storage/v1/object/sign/"):

@@ -59,6 +59,18 @@ after you post, so a just-posted photo does not sit unseen for up to half an
 hour. Decoded images are cached by storage path rather than URL, so a refresh
 does not re-download every photo already on screen.
 
+Every post carries a heart (SOL-89): tap to like, tap again to take it back.
+The count and your own state arrive with the row — three computed columns,
+so a page of twenty is still one request — and a tap shows its result at
+once through `EngagementStore`, which puts the old state back with a message
+if the server refuses. The same store is what the detail view reads, so a
+like made there is on the feed row when you come back; an override applies
+only while the row on screen is the one it was derived from, so a refetched
+row wins without anything being cleared. Counts are "the likes you can see"
+— a blocked pair's likes are left out of each other's numbers — and nothing
+here refetches the feed: a like is too small and too frequent for the
+blanket refresh below.
+
 Following, unfollowing, blocking or unblocking someone refreshes the feed the
 same way posting does: the action marks it stale (`FeedInvalidation`), the
 feed refetches its newest page and replaces its list, and rows that are no
@@ -176,7 +188,9 @@ request but the status check, and a valid one travels in the sign-up
 metadata. `ProfileServiceSearchTests` pins the prefix request — normalised,
 `_` escaped, capped — and the inputs answered empty without one.
 `ReportServiceTests` pins both report shapes, the repeat treated as success
-and the refusal that stays vague. All of them
+and the refusal that stays vague. `LikeServiceTests` pins the like and unlike
+requests the same way, the duplicate treated as success and its own vague
+refusal. All of them
 build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
@@ -187,6 +201,12 @@ prove the guard that drops a `loadMore` overtaken by a refresh, since staging
 that through canned responses means blocking inside a `URLSession` callback.
 The same suite covers the id-dedupe on append, the retry after a failed page,
 a failed refresh leaving posts on screen, and the staleness boundary.
+
+`EngagementStoreTests` needs no HTTP either. A `FakeLiker` stands in for
+`LikeService` through the `PostLiking` protocol, so a test can hold a like
+request open to prove the second tap is ignored, fail one to prove the
+rollback puts back exactly what was shown, and hand the store a refetched
+row to prove a fresher row wins over a stale override.
 
 The authorization rule itself is tested in SQL, not Swift.
 `supabase/tests/visibility_matrix.sql` impersonates each seeded account the
@@ -248,16 +268,20 @@ Config/               Build configuration; Secrets.xcconfig here is gitignored
 Candid/
   CandidApp.swift     App entry point
   Models/             FeedPost/FeedPage/FeedCursor, Profile, Relationship,
-                      FollowCounts, Invite/InviteState, UsernameRules
+                      FollowCounts, Invite/InviteState, UsernameRules,
+                      PostEngagement (a post's like and comment numbers)
   ViewModels/         SessionStore (mirrors the SDK's auth state),
                       PagedPosts (one page-at-a-time list of posts, shared by
                       the feed and the profile grid),
                       FeedInvalidation (tells the feed to refresh after a post),
+                      EngagementStore (optimistic likes and comment counts,
+                      laid over what the server said),
                       PendingInvite (a code that arrived by deep link),
                       TabSelection (which tab is showing, for empty states)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
-                      FollowService, InviteService, ReportService, StorageService,
+                      FollowService, InviteService, ReportService, LikeService,
+                      StorageService,
                       ImageCache, ImageDownsampler, ServiceErrors (shared error
                       mapping), Log
   Views/              RootView (session gate), ConfigurationErrorView, auth
@@ -265,8 +289,9 @@ Candid/
                       everyone else's), FollowListView, PostDetailView,
                       InvitesView, EditUsernameSheet, PeopleView (the People tab),
                       ReportSheet, EmptyStates (the six empty states' copy)
-    Components/       PostImageView, LoadMoreFooter, the delete-post and
-                      report-then-block flows, shared form controls
+    Components/       PostImageView, PostActionsRow (the heart and its count),
+                      LoadMoreFooter, the delete-post and report-then-block
+                      flows, shared form controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
 supabase/             CLI config, versioned migrations, seed data, and the

@@ -403,5 +403,6 @@ struct ProfileScreen: View {
     .environmentObject(SessionStore(client: .preview))
     .environment(\.services, AppServices(client: .preview))
     .environment(FeedInvalidation())
+    .environment(EngagementStore())
     .environment(TabSelection())
 }
