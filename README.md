@@ -82,8 +82,9 @@ request; a counter appears under the field once the limit is close. You can
 delete your own comment anywhere and any comment on your own post — exactly
 where the policy would let you — and it acts at once, coming back with a
 message if the server refuses. Report… on someone else's comment reports
-their account, then offers the block, as a post does. Comments are immutable,
-like posts: delete and rewrite.
+their account, then offers the block, as a post does. Each comment carries a
+heart of its own (SOL-91), the same toggle as a post's, flipped in place on
+this one screen. Comments are immutable, like posts: delete and rewrite.
 
 Following, unfollowing, blocking or unblocking someone refreshes the feed the
 same way posting does: the action marks it stale (`FeedInvalidation`), the
@@ -203,8 +204,8 @@ metadata. `ProfileServiceSearchTests` pins the prefix request — normalised,
 `_` escaped, capped — and the inputs answered empty without one.
 `ReportServiceTests` pins both report shapes, the repeat treated as success
 and the refusal that stays vague. `LikeServiceTests` pins the like and unlike
-requests the same way, the duplicate treated as success and its own vague
-refusal. `CommentServiceTests` pins the thread request — oldest-first,
+requests the same way, for posts and for comments, the duplicate treated as
+success and its own vague refusal. `CommentServiceTests` pins the thread request — oldest-first,
 capped, naming the computed columns — the insert that reads its own row back,
 the by-`id` delete, and the body rules that refuse before any request. All of them
 build their client with `TestSupabaseClient` in

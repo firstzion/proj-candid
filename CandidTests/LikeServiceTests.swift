@@ -88,6 +88,55 @@ struct LikeServiceTests {
         #expect(query["user_id"] == "eq.\(Self.me.uuidString)")
     }
 
+    @Test("liking a comment inserts the row with the caller as the liker, and a duplicate is success")
+    func likeCommentInsertsRow() async throws {
+        let (service, stub) = Self.makeService()
+        let comment = UUID()
+        stub.setHandler { _ in .init(statusCode: 201, body: Data()) }
+
+        try await service.like(comment: comment)
+
+        let request = try #require(stub.requests.last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/rest/v1/comment_likes")
+
+        struct Body: Decodable {
+            let commentID: UUID
+            let userID: UUID
+            enum CodingKeys: String, CodingKey {
+                case commentID = "comment_id"
+                case userID = "user_id"
+            }
+        }
+        let body = try JSONDecoder().decode(Body.self, from: try #require(request.drainedBody))
+        #expect(body.commentID == comment)
+        #expect(body.userID == Self.me)
+
+        stub.setHandler { _ in
+            .init(
+                statusCode: 409,
+                body: Data(#"{"code":"23505","message":"duplicate key value violates unique constraint \"comment_likes_pkey\""}"#.utf8)
+            )
+        }
+        try await service.like(comment: comment)
+    }
+
+    @Test("unliking a comment deletes only the caller's own like of it")
+    func unlikeCommentDeletesOwnRow() async throws {
+        let (service, stub) = Self.makeService()
+        let comment = UUID()
+        stub.setHandler { _ in .init(statusCode: 204, body: Data()) }
+
+        try await service.unlike(comment: comment)
+
+        let request = try #require(stub.requests.last)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path == "/rest/v1/comment_likes")
+        let query = request.queryParameters
+        #expect(query["comment_id"] == "eq.\(comment.uuidString)")
+        #expect(query["user_id"] == "eq.\(Self.me.uuidString)")
+    }
+
     /// The insert policy refuses a post the caller cannot see — deleted, or
     /// hidden by a block since the page loaded — and the wording must not
     /// say which, since either would confirm something about a hidden post.

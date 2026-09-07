@@ -58,25 +58,32 @@ struct CommentsModelTests {
         #"{"id":"\#(id.uuidString.lowercased())","post_id":"\#(UUID().uuidString.lowercased())","user_id":"\#(author.uuidString.lowercased())","body":"\#(body)","created_at":"2026-09-04T14:04:\#(seconds).000000+00:00","comment_like_count":0,"comment_liked_by_viewer":false,"profiles":{"username":"\#(username)"}}"#
     }
 
-    /// Answers the thread with `rows`, a POST with `posted`, and a DELETE with
-    /// `deleteStatus`, so one handler serves a whole test.
+    /// Answers the thread with `rows`, a comment POST with `posted`, a comment
+    /// DELETE with `deleteStatus`, and the comment-likes table with
+    /// `likeStatus` (201 accepts, anything else refuses), so one handler
+    /// serves a whole test.
     private static func stub(
         _ stub: TestSupabaseClient.StubbedClient,
         rows: [String],
         posted: String? = nil,
-        deleteStatus: Int = 204
+        deleteStatus: Int = 204,
+        likeStatus: Int = 201
     ) {
+        let refusal = Data(#"{"code":"42501","message":"new row violates row-level security policy"}"#.utf8)
         stub.setHandler { request in
+            let isLikes = request.url?.path == "/rest/v1/comment_likes"
             switch request.httpMethod {
             case "GET":
                 return .init(body: Data("[\(rows.joined(separator: ","))]".utf8))
+            case "POST" where isLikes:
+                return .init(statusCode: likeStatus, body: likeStatus == 201 ? Data() : refusal)
             case "POST":
-                guard let posted else {
-                    return .init(statusCode: 403, body: Data(#"{"code":"42501","message":"new row violates row-level security policy for table \"comments\""}"#.utf8))
-                }
+                guard let posted else { return .init(statusCode: 403, body: refusal) }
                 return .init(statusCode: 201, body: Data(posted.utf8))
+            case "DELETE" where isLikes:
+                return .init(statusCode: 204, body: Data())
             case "DELETE":
-                return .init(statusCode: deleteStatus, body: deleteStatus == 204 ? Data() : Data(#"{"code":"42501","message":"insufficient_privilege"}"#.utf8))
+                return .init(statusCode: deleteStatus, body: deleteStatus == 204 ? Data() : refusal)
             default:
                 return .init(statusCode: 404, body: Data())
             }
@@ -195,6 +202,45 @@ struct CommentsModelTests {
         #expect(model.comments.map(\.id) == [second])
         #expect(model.message == nil)
         #expect(store.engagement(for: post).commentCount == 1)
+    }
+
+    @Test("liking a comment flips it in place, stays on success, and unlikes the same way")
+    func commentLikeOptimistic() async {
+        let post = Self.post(by: Self.alice)
+        let (model, stub) = Self.makeModel(post: post)
+        let id = UUID()
+        Self.stub(stub, rows: [Self.rowJSON(id: id, author: Self.alice, username: "alice", body: "Thanks!", at: 31)])
+        await model.load()
+
+        await model.toggleLike(on: model.comments[0])
+
+        #expect(model.comments[0].isLikedByViewer)
+        #expect(model.comments[0].likeCount == 1)
+        #expect(model.message == nil)
+        #expect(stub.requests.last?.httpMethod == "POST")
+        #expect(stub.requests.last?.url?.path == "/rest/v1/comment_likes")
+
+        await model.toggleLike(on: model.comments[0])
+
+        #expect(model.comments[0].isLikedByViewer == false)
+        #expect(model.comments[0].likeCount == 0)
+        #expect(stub.requests.last?.httpMethod == "DELETE")
+        #expect(stub.requests.last?.url?.path == "/rest/v1/comment_likes")
+    }
+
+    @Test("a refused comment like is put back with a message")
+    func commentLikeFailure() async {
+        let post = Self.post(by: Self.alice)
+        let (model, stub) = Self.makeModel(post: post)
+        let id = UUID()
+        Self.stub(stub, rows: [Self.rowJSON(id: id, author: Self.alice, username: "alice", body: "Thanks!", at: 31)], likeStatus: 403)
+        await model.load()
+
+        await model.toggleLike(on: model.comments[0])
+
+        #expect(model.comments[0].isLikedByViewer == false)
+        #expect(model.comments[0].likeCount == 0)
+        #expect(model.message?.kind == .failure)
     }
 
     /// The menu mirrors the delete policy: your own comment anywhere, and

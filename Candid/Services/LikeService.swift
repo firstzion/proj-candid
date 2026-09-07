@@ -75,6 +75,37 @@ struct LikeService {
         }
     }
 
+    /// Likes `commentID` (SOL-91). The insert policy resolves the comment to
+    /// its post through `can_view_comment()`; a duplicate is success, as with
+    /// a post.
+    func like(comment commentID: UUID) async throws {
+        let me = try await sessionUserID()
+        do {
+            try await client
+                .from("comment_likes")
+                .insert(NewCommentLike(commentID: commentID, userID: me))
+                .execute()
+        } catch {
+            if Self.isDuplicate(error) { return }
+            throw Self.mapLikeError(error)
+        }
+    }
+
+    /// Removes the caller's like of `commentID`; idempotent, as with a post.
+    func unlike(comment commentID: UUID) async throws {
+        let me = try await sessionUserID()
+        do {
+            try await client
+                .from("comment_likes")
+                .delete()
+                .eq("comment_id", value: commentID)
+                .eq("user_id", value: me)
+                .execute()
+        } catch {
+            throw Self.mapLikeError(error)
+        }
+    }
+
     /// Postgres `unique_violation` — a composite primary key refusing a
     /// second identical like.
     static func isDuplicate(_ error: Error) -> Bool {
@@ -116,6 +147,17 @@ private struct NewLike: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case postID = "post_id"
+        case userID = "user_id"
+    }
+}
+
+/// The `comment_likes` insert payload: the same two-column shape.
+private struct NewCommentLike: Encodable {
+    let commentID: UUID
+    let userID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case commentID = "comment_id"
         case userID = "user_id"
     }
 }

@@ -28,6 +28,10 @@ final class CommentsModel {
     /// next attempt.
     private(set) var message: FormMessage?
 
+    /// Comments with a like request out, so a second tap waits rather than
+    /// races — the guard `EngagementStore` keeps for posts (SOL-91).
+    private var likesInFlight: Set<UUID> = []
+
     private let services: AppServices
     private let currentUserID: UUID?
 
@@ -101,6 +105,41 @@ final class CommentsModel {
             engagement.commentRemoved(from: post)
         } catch {
             comments.insert(comment, at: min(index, comments.count))
+            message = .failure(error.localizedDescription)
+        }
+    }
+
+    func isLikeBusy(_ comment: Comment) -> Bool {
+        likesInFlight.contains(comment.id)
+    }
+
+    /// The heart on a comment (SOL-91): flipped in place at once, put back
+    /// with a message if the server refuses. Comment likes show on this one
+    /// screen, so they need no overlay; the thread reloads on open, and a
+    /// restart shows the server's state.
+    func toggleLike(on comment: Comment) async {
+        guard !likesInFlight.contains(comment.id),
+              let index = comments.firstIndex(where: { $0.id == comment.id }) else { return }
+        likesInFlight.insert(comment.id)
+        defer { likesInFlight.remove(comment.id) }
+
+        let previous = comments[index]
+        var optimistic = previous
+        optimistic.isLikedByViewer.toggle()
+        optimistic.likeCount = max(0, previous.likeCount + (optimistic.isLikedByViewer ? 1 : -1))
+        comments[index] = optimistic
+        message = nil
+
+        do {
+            if optimistic.isLikedByViewer {
+                try await services.like.like(comment: comment.id)
+            } else {
+                try await services.like.unlike(comment: comment.id)
+            }
+        } catch {
+            if let current = comments.firstIndex(where: { $0.id == comment.id }) {
+                comments[current] = previous
+            }
             message = .failure(error.localizedDescription)
         }
     }

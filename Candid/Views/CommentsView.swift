@@ -106,9 +106,11 @@ struct CommentsView: View {
                             comment: comment,
                             canDelete: model.canDelete(comment),
                             isOwn: model.isOwn(comment),
+                            isLikeBusy: model.isLikeBusy(comment),
                             onOpenProfile: { selectedProfile = Profile(id: comment.authorID, username: comment.username) },
                             onDelete: { Task { await model.delete(comment, engagement: engagementStore) } },
-                            onReport: { reportTarget = .profile(Profile(id: comment.authorID, username: comment.username)) }
+                            onReport: { reportTarget = .profile(Profile(id: comment.authorID, username: comment.username)) },
+                            onToggleLike: { Task { await model.toggleLike(on: comment) } }
                         )
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.candidGround)
@@ -264,16 +266,18 @@ struct CommentsView: View {
     }
 }
 
-/// One comment: who, when, what they wrote — and, since SOL-91, the heart.
-/// The long-press menu and the swipe offer Delete where the policy would
-/// match, and Report… on anyone else's.
+/// One comment: who, when, what they wrote, and the heart (SOL-91). The
+/// long-press menu and the swipe offer Delete where the policy would match,
+/// and Report… on anyone else's.
 private struct CommentRow: View {
     let comment: Comment
     let canDelete: Bool
     let isOwn: Bool
+    let isLikeBusy: Bool
     let onOpenProfile: () -> Void
     let onDelete: () -> Void
     let onReport: () -> Void
+    let onToggleLike: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -295,6 +299,28 @@ private struct CommentRow: View {
                     .foregroundStyle(.candidBody)
             }
             Spacer(minLength: 8)
+            Button(action: onToggleLike) {
+                VStack(spacing: 2) {
+                    Image(systemName: comment.isLikedByViewer ? "heart.fill" : "heart")
+                        .font(.system(size: 15))
+                        .foregroundStyle(comment.isLikedByViewer ? Color.candidAccent : Color.candidMuted)
+                        .contentTransition(.symbolEffect(.replace))
+                    if comment.likeCount > 0 {
+                        Text("\(comment.likeCount)")
+                            .font(.system(size: 11))
+                            .monospacedDigit()
+                            .foregroundStyle(.candidMuted)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(isLikeBusy)
+            .accessibilityLabel(comment.isLikedByViewer ? "Unlike" : "Like")
+            .accessibilityValue("\(comment.likeCount) likes")
+            // A light tap on like only, as on a post.
+            .sensoryFeedback(.impact(weight: .light), trigger: comment.isLikedByViewer) { _, isLiked in
+                isLiked
+            }
         }
         .padding(.vertical, 6)
         .contextMenu {
@@ -320,6 +346,7 @@ private struct CommentRow: View {
         // name button offered in the actions rotor, as the feed row does.
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: "View profile", onOpenProfile)
+        .accessibilityAction(named: comment.isLikedByViewer ? "Unlike" : "Like", onToggleLike)
     }
 }
 
