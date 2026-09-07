@@ -25,6 +25,9 @@ struct FeedView: View {
     /// username.
     @State private var selectedProfile: Profile?
 
+    /// The post whose bubble was tapped; non-nil pushes its thread (SOL-90).
+    @State private var commentsPost: FeedPost?
+
     /// The post whose long-press menu chose Delete, held while the
     /// confirmation is up; and the failure message if the server refused.
     @State private var postToDelete: FeedPost?
@@ -63,6 +66,9 @@ struct FeedView: View {
             .toolbarBackground(Color.candidGround, for: .navigationBar)
             .navigationDestination(item: $selectedProfile) { profile in
                 ProfileScreen(profile: profile)
+            }
+            .navigationDestination(item: $commentsPost) { post in
+                CommentsView(post: post)
             }
             .deletePostConfirmation($postToDelete, isPresented: $isConfirmingDelete) { post in
                 Task { await delete(post) }
@@ -166,7 +172,8 @@ struct FeedView: View {
             engagement: engagementStore.engagement(for: post),
             isLikeBusy: engagementStore.isBusy(post.id),
             onOpenProfile: { selectedProfile = Profile(id: post.authorID, username: post.username) },
-            onToggleLike: { Task { await toggleLike(post) } }
+            onToggleLike: { Task { await toggleLike(post) } },
+            onOpenComments: { commentsPost = post }
         )
         if post.authorID == sessionStore.currentUserID {
             row.contextMenu {
@@ -227,13 +234,10 @@ private struct FeedPostRow: View {
     /// Likes or unlikes the post — from the heart, or from the actions rotor.
     let onToggleLike: () -> Void
 
-    @Environment(\.services) private var services
+    /// Opens the post's thread — from the bubble, or from the actions rotor.
+    let onOpenComments: () -> Void
 
-    /// How long a post stays on a relative timestamp before switching to an
-    /// absolute date — a post from three months ago reading "12 wk" is not
-    /// more useful than "Jun 12", and stops changing every time the row
-    /// re-renders.
-    private static let relativeCutoff: TimeInterval = 7 * 24 * 60 * 60
+    @Environment(\.services) private var services
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -272,7 +276,12 @@ private struct FeedPostRow: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            PostActionsRow(engagement: engagement, isBusy: isLikeBusy, onToggleLike: onToggleLike)
+            PostActionsRow(
+                engagement: engagement,
+                isBusy: isLikeBusy,
+                onToggleLike: onToggleLike,
+                onOpenComments: onOpenComments
+            )
 
             if let caption = post.caption {
                 Text(caption)
@@ -280,7 +289,7 @@ private struct FeedPostRow: View {
                     .foregroundStyle(.candidBody)
             }
 
-            timestamp
+            RelativeTimestamp(date: post.createdAt)
                 .font(.system(size: 13))
                 .foregroundStyle(.candidMuted)
         }
@@ -295,14 +304,7 @@ private struct FeedPostRow: View {
         // The heart is swallowed the same way; its count still reads through
         // the button's accessibility value.
         .accessibilityAction(named: engagement.isLikedByViewer ? "Unlike" : "Like", onToggleLike)
-    }
-
-    private var timestamp: Text {
-        if Date.now.timeIntervalSince(post.createdAt) > Self.relativeCutoff {
-            Text(post.createdAt, format: .dateTime.month().day())
-        } else {
-            Text(post.createdAt, format: .relative(presentation: .named))
-        }
+        .accessibilityAction(named: "Comments", onOpenComments)
     }
 }
 

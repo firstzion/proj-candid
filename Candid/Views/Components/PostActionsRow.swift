@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The row under a photo: the heart and its count (SOL-89). One component
-/// for the feed row and the detail view, so the two cannot drift. Reads
-/// nothing itself — the caller passes what `EngagementStore` says to show —
-/// and decides nothing: the like policy is the database's.
+/// The row under a photo: the heart and its count (SOL-89), and the comment
+/// bubble and its count (SOL-90). One component for the feed row and the
+/// detail view, so the two cannot drift. Reads nothing itself — the caller
+/// passes what `EngagementStore` says to show — and decides nothing: the
+/// like policy is the database's.
 ///
 /// Counts hide at zero. A row of zeros is noise on a quiet network, and a
 /// first like appearing as a number reads as the event it is. Chrome type is
@@ -16,6 +17,9 @@ struct PostActionsRow: View {
     let isBusy: Bool
 
     let onToggleLike: () -> Void
+
+    /// Opens the post's thread (SOL-90).
+    let onOpenComments: () -> Void
 
     var body: some View {
         HStack(spacing: 20) {
@@ -42,6 +46,23 @@ struct PostActionsRow: View {
                 isLiked
             }
 
+            Button(action: onOpenComments) {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.right")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.candidMuted)
+                    if engagement.commentCount > 0 {
+                        Text("\(engagement.commentCount)")
+                            .font(.system(size: 13.5))
+                            .monospacedDigit()
+                            .foregroundStyle(.candidMuted)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Comments")
+            .accessibilityValue("\(engagement.commentCount) comments")
+
             Spacer()
         }
         .padding(.vertical, 2)
@@ -50,8 +71,8 @@ struct PostActionsRow: View {
 
 #Preview {
     VStack(alignment: .leading, spacing: 16) {
-        PostActionsRow(engagement: PostEngagement(likeCount: 3, commentCount: 2, isLikedByViewer: true), isBusy: false) {}
-        PostActionsRow(engagement: PostEngagement(likeCount: 0, commentCount: 0, isLikedByViewer: false), isBusy: false) {}
+        PostActionsRow(engagement: PostEngagement(likeCount: 3, commentCount: 2, isLikedByViewer: true), isBusy: false, onToggleLike: {}, onOpenComments: {})
+        PostActionsRow(engagement: PostEngagement(likeCount: 0, commentCount: 0, isLikedByViewer: false), isBusy: false, onToggleLike: {}, onOpenComments: {})
     }
     .padding()
     .background(Color.candidGround)

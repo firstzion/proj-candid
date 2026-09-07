@@ -24,6 +24,9 @@ struct PostDetailView: View {
 
     @State private var reportTarget: ReportSheet.Target?
 
+    /// The bubble was tapped; pushes the thread (SOL-90).
+    @State private var isShowingComments = false
+
     private var isOwn: Bool { sessionStore.currentUserID == post.authorID }
 
     var body: some View {
@@ -53,7 +56,8 @@ struct PostDetailView: View {
                 PostActionsRow(
                     engagement: engagementStore.engagement(for: post),
                     isBusy: engagementStore.isBusy(post.id),
-                    onToggleLike: { Task { await toggleLike() } }
+                    onToggleLike: { Task { await toggleLike() } },
+                    onOpenComments: { isShowingComments = true }
                 )
 
                 if let caption = post.caption {
@@ -100,6 +104,9 @@ struct PostDetailView: View {
         }
         .reportAndBlockFlow(target: $reportTarget) { person in
             await block(person)
+        }
+        .navigationDestination(isPresented: $isShowingComments) {
+            CommentsView(post: post)
         }
         .deletePostConfirmation(.constant(post), isPresented: $isConfirmingDelete) { _ in
             Task { await delete() }

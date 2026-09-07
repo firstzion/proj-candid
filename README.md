@@ -30,9 +30,9 @@ where things stand; the sections below say how the parts work.
 ## What's built
 
 Enough for a small group to use end to end: sign up with an invite, post a
-photo to a chosen audience, read a feed filtered by who you follow, find and
-follow people, change your username, block or report someone, and delete your
-account. Authorization is not the app's business — one Postgres function,
+photo to a chosen audience, read a feed filtered by who you follow, like and
+comment on what you see, find and follow people, change your username, block
+or report someone, and delete your account. Authorization is not the app's business — one Postgres function,
 `can_view_post()`, decides every read of a post or a post image, and the
 client sends no filter of its own (see Schema). Uploads carry no metadata
 (SOL-44), posts can be deleted (SOL-38), reports collect where only the
@@ -70,6 +70,20 @@ row wins without anything being cleared. Counts are "the likes you can see"
 — a blocked pair's likes are left out of each other's numbers — and nothing
 here refetches the feed: a like is too small and too frequent for the
 blanket refresh below.
+
+Every post also opens a thread (SOL-90): the bubble and its count on the
+card lead to `CommentsView` — the caption as its first row, comments
+oldest-first below it, and a composer pinned to the bottom. One request loads
+the thread, capped at 500, which a friends-only network does not approach,
+and a new comment appends the row the server hands back, so its id and time
+are real rather than guessed. Bodies are trimmed, 1 to 1,000 characters
+measured the way Postgres measures, and refused with a sentence before any
+request; a counter appears under the field once the limit is close. You can
+delete your own comment anywhere and any comment on your own post — exactly
+where the policy would let you — and it acts at once, coming back with a
+message if the server refuses. Report… on someone else's comment reports
+their account, then offers the block, as a post does. Comments are immutable,
+like posts: delete and rewrite.
 
 Following, unfollowing, blocking or unblocking someone refreshes the feed the
 same way posting does: the action marks it stale (`FeedInvalidation`), the
@@ -190,7 +204,9 @@ metadata. `ProfileServiceSearchTests` pins the prefix request — normalised,
 `ReportServiceTests` pins both report shapes, the repeat treated as success
 and the refusal that stays vague. `LikeServiceTests` pins the like and unlike
 requests the same way, the duplicate treated as success and its own vague
-refusal. All of them
+refusal. `CommentServiceTests` pins the thread request — oldest-first,
+capped, naming the computed columns — the insert that reads its own row back,
+the by-`id` delete, and the body rules that refuse before any request. All of them
 build their client with `TestSupabaseClient` in
 `CandidTests/Support/`.
 
@@ -206,7 +222,11 @@ a failed refresh leaving posts on screen, and the staleness boundary.
 `LikeService` through the `PostLiking` protocol, so a test can hold a like
 request open to prove the second tap is ignored, fail one to prove the
 rollback puts back exactly what was shown, and hand the store a refetched
-row to prove a fresher row wins over a stale override.
+row to prove a fresher row wins over a stale override. `CommentsModelTests`
+drives `CommentsModel` the way `FeedModelTests` drives the feed: the thread
+in server order, an add that appends the returned row and moves the card's
+count, a delete that comes back on failure, and the delete rule the menu
+mirrors.
 
 The authorization rule itself is tested in SQL, not Swift.
 `supabase/tests/visibility_matrix.sql` impersonates each seeded account the
@@ -269,29 +289,33 @@ Candid/
   CandidApp.swift     App entry point
   Models/             FeedPost/FeedPage/FeedCursor, Profile, Relationship,
                       FollowCounts, Invite/InviteState, UsernameRules,
-                      PostEngagement (a post's like and comment numbers)
+                      PostEngagement (a post's like and comment numbers),
+                      Comment
   ViewModels/         SessionStore (mirrors the SDK's auth state),
                       PagedPosts (one page-at-a-time list of posts, shared by
                       the feed and the profile grid),
                       FeedInvalidation (tells the feed to refresh after a post),
                       EngagementStore (optimistic likes and comment counts,
                       laid over what the server said),
+                      CommentsModel (one post's thread),
                       PendingInvite (a code that arrived by deep link),
                       TabSelection (which tab is showing, for empty states)
   Services/           AppServices (DI container built at launch), SupabaseService,
                       AuthService, ProfileService, PostService, FeedService,
                       FollowService, InviteService, ReportService, LikeService,
-                      StorageService,
+                      CommentService, StorageService,
                       ImageCache, ImageDownsampler, ServiceErrors (shared error
                       mapping), Log
   Views/              RootView (session gate), ConfigurationErrorView, auth
                       screens, RootTabView and tabs, ProfileScreen (yours and
                       everyone else's), FollowListView, PostDetailView,
                       InvitesView, EditUsernameSheet, PeopleView (the People tab),
-                      ReportSheet, EmptyStates (the six empty states' copy)
-    Components/       PostImageView, PostActionsRow (the heart and its count),
-                      LoadMoreFooter, the delete-post and report-then-block
-                      flows, shared form controls
+                      CommentsView (a post's thread), ReportSheet,
+                      EmptyStates (the seven empty states' copy)
+    Components/       PostImageView, PostActionsRow (the heart, the bubble and
+                      their counts), RelativeTimestamp, LoadMoreFooter, the
+                      delete-post and report-then-block flows, shared form
+                      controls
   Resources/          Asset catalog
 CandidTests/          Unit tests (Swift Testing)
 supabase/             CLI config, versioned migrations, seed data, and the

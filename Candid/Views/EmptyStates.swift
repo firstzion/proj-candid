@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The six ways a screen can be empty (SOL-40), with deliberate copy in one
-/// place and a path forward where there is one.
+/// The seven ways a screen can be empty (SOL-40), with deliberate copy in
+/// one place and a path forward where there is one.
 ///
 /// Under invite-only onboarding (SOL-43) a new account arrives with one
 /// friend, so "following nobody" is no longer the first screen anyone sees —
@@ -11,7 +11,10 @@ import SwiftUI
 /// Someone else's profile with no visible posts says one neutral thing for
 /// two meanings on purpose — the post count is computed under RLS (SOL-37),
 /// so an account with three friends-only posts reads exactly like one with
-/// none, and the existence of hidden posts never leaks.
+/// none, and the existence of hidden posts never leaks. A thread with no
+/// comments (SOL-90) is a real zero, unlike the feed's two empties, so it
+/// invites rather than explains; `CommentsView` draws it compactly rather
+/// than as the full card, which is sized for a whole screen.
 enum EmptyState: Hashable {
     case feedFollowingNobody
     case feedNothingYet
@@ -19,6 +22,7 @@ enum EmptyState: Hashable {
     case profileNoVisiblePosts
     case searchNoResults(query: String)
     case blockedProfile(username: String)
+    case noComments
 
     var title: String {
         switch self {
@@ -28,6 +32,7 @@ enum EmptyState: Hashable {
         case .profileNoVisiblePosts: "No posts"
         case .searchNoResults: "No one found"
         case .blockedProfile(let username): "You've blocked @\(username)"
+        case .noComments: "No comments yet"
         }
     }
 
@@ -39,6 +44,7 @@ enum EmptyState: Hashable {
         case .profileNoVisiblePosts: "Nothing to see here yet."
         case .searchNoResults(let query): "No people match “\(query)”."
         case .blockedProfile: "You won't see each other's posts. Unblock to start over."
+        case .noComments: "Say something about this photo."
         }
     }
 
@@ -50,6 +56,7 @@ enum EmptyState: Hashable {
         case .profileNoVisiblePosts: "photo.on.rectangle.angled"
         case .searchNoResults: "magnifyingglass"
         case .blockedProfile: "hand.raised"
+        case .noComments: "bubble.right"
         }
     }
 
